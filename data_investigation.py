@@ -403,6 +403,11 @@ if sample_inves_6:
     print("\nColumn count after filtering for missing data:")
     print(len(merged.columns))
 
+# Summarise missing values in columns after filtering
+merged_null = merged.isnull().sum().to_frame(name='Missing_Count')
+merged_null['Missing_Percentage'] = (merged_null['Missing_Count'] / len(merged)) * 100
+merged_null.to_csv("Missing_values_after_filtering.csv", header=["Missing_Count", "Missingness (%)"], float_format="%.1f")
+
 # Plot missingness after filtering (before is unreadable)
 fig = msno.matrix(merged)
 fig_copy = fig.get_figure()
@@ -476,7 +481,8 @@ if sample_inves_7:
     if cols_nanned == 0:
         print("\nNone of the columns had any real values converted to NaN.")
 
-# TODO: note that categorical can still later be encoded
+# Save final dataset to csv
+merged.to_csv("Surrey_final.csv")
 
 ### TRAIN.TEST SPLIT - KEEP PATIENT DATA TOGETHER ######################################################################
 # Extract patient IDs from the index
