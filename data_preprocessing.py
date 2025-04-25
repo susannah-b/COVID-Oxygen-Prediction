@@ -12,6 +12,8 @@ from sklearn.preprocessing import LabelEncoder
 
 # TODO delete any unused at end
 
+# todo NOTE IMPORTANT for test and train imputation, num_datsets and iterations are very low in an attempt to get it to run. must be changed and run on hpc
+
 # Set pandas to display all columns
 pd.set_option('display.max_columns', None)
 
@@ -49,7 +51,7 @@ cat_cols = X_train.select_dtypes(exclude='number').columns.tolist()
 if show_testing:
     print("Numeric:", numeric_cols)
     print("Categorical:", cat_cols)
-    # TODO still not sure if chol should be in here or not
+    # TODO still not sure if chol should be in here or not - investigate
 
 # Check which test categories are binary/ordinal - use full dataset to check all regardless of train/test split
 if show_testing:
@@ -86,7 +88,7 @@ ordinal_cats = {'Chol' : ['N', 'Y'],
                 'Survived Admission' : ['N', 'Y'],
                 'T2DM' : ['N', 'Y']
                 }
-# TODO O2 req not included, maybe that comes later. Also btw haven't done anything with test yet
+
 nominal_cats = [] # In this case empty, but may not be with other data sets so leaving in as framework - see MH model for example
 # For both X_train and X_test, convert to ordered categorical WITHOUT extracting codes
 
@@ -104,12 +106,12 @@ for cat, codes in ordinal_cats.items():
 
 
 ### IMPUTE MISSING VALUES ##############################################################################################
-#TODO current method just assumes MAR for all and uses MICE. In reality I need to investigate the data more - eg MNAR
-# due to low abundance, possibly overlap with other peaks? Assess missingness using proven methods and handle accordingly
+#TODO current method just assumes MAR for all and uses MICE. In reality I need to investigate the data more - e.g. MNAR
+# due to low abundance, vs possibly overlap with other peaks? Assess missingness using proven methods and handle accordingly
 #  Also could log2 transform to reduce variacne (check validity ) and normalise if needed
 
 # Bool whether to impute - can skip for future runs
-impute = True
+impute = False
 
 imputed_train = "Surrey_train_after_imputation_scaling.csv"
 imputed_test = "Surrey_test_after_imputation_scaling.csv"
@@ -125,11 +127,11 @@ if impute:
 
     ### MAR Imputation for complete dataset with MICE
     # Initialize kernel (handles categoricals natively)
-    kernel = mf.ImputationKernel(data=train_missing, num_datasets=3, random_state=42) #todo could increase with more memory
+    kernel = mf.ImputationKernel(data=train_missing, num_datasets=3, random_state=42) # todo could increase with more memory (and for test)
 
     # Run MICE with 10 iterations
     kernel.mice(iterations=5) # TODO was set to 10 but memory runs out, restore if running on HPC
-    # kernel.plot_feature_importance(dataset=0) #todo commenting plots to try and redce memory
+    # kernel.plot_feature_importance(dataset=0) #todo commenting plots to try and reduce memory
     # kernel.plot_imputed_distributions()
     #
     # # Save feature importance plot
@@ -150,10 +152,6 @@ if impute:
     # Restore the original index with SIDs
     train_missing.index = original_index_xtrain
 
-    # Scale X_train numerical columns
-    std_scaler = StandardScaler()
-    train_missing[numeric_cols] = std_scaler.fit_transform(train_missing[numeric_cols])
-
     # Update X_train data with the imputed datasets
     X_train = train_missing
 
@@ -162,7 +160,7 @@ if impute:
 
 else: # If not imputing, read in the data
     print("Skipping imputation; used already produced imputed file. Otherwise set impute = True")
-    #X_train = pd.read_csv(imputed_train, index_col=0) #TODO commented out while i test the rest
+    X_train = pd.read_csv(imputed_train, index_col=0)
 
 
 ### Repeat for test data - IMPROVE this could be condensed with training - possibly with Pipeline
@@ -184,7 +182,7 @@ if impute:
     # kernel.plot_feature_importance(dataset=0) #todo commenting plots to try and redce memory
     # kernel.plot_imputed_distributions()
     #
-    # # Save feature importance plot #todo haven't looked at these for the test or train data yet, maybe remove. same for distributions
+    # # Save feature importance plot #todo haven't looked at these for the test or train data yet as i haven't been able to test generation, maybe remove. same for distributions
     # fig1 = kernel.plot_feature_importance(dataset=0)
     # plt.tight_layout()
     # plt.savefig('Surrey_feature_importance_plot_test.png')
@@ -202,10 +200,6 @@ if impute:
     # Restore the original index with SIDs
     test_missing.index = original_index_xtest
 
-    # Scale X_test numerical columns
-    std_scaler = StandardScaler()
-    test_missing[numeric_cols] = std_scaler.transform(test_missing[numeric_cols])
-
     # Update X_test data with the imputed datasets
     X_test = test_missing
 
@@ -214,22 +208,29 @@ if impute:
 
 else: # If not imputing, read in the data
     print("Skipping imputation; used already produced imputed file. Otherwise set impute = True")
-    #X_test = pd.read_csv(imputed_test, index_col=0) #TODO commented out while i test the rest
+    X_test = pd.read_csv(imputed_test, index_col=0)
 
-# Check columns are correctly imputed for categorical data (i.e still integers) #todo if show testing
-for cat in ordinal_cats:
-    print(f"\nUnique values in X_train {cat}: {X_train[cat].unique()}")
-    print(f"Unique values in X_test {cat}: {X_test[cat].unique()}")
-    # Expected output: [0, 1] (no decimals!)
+# Check columns are correctly imputed for categorical data (i.e still categorical)
+if show_testing:
+    for cat in ordinal_cats:
+        print(f"\nUnique values in X_train {cat}: {X_train[cat].unique()}")
+        print(f"Unique values in X_test {cat}: {X_test[cat].unique()}")
+        # Should look the same as before imputation (probably unecessary testing now code is defined but leaving in)
 
 ### ENCODE CATEGORICAL DATA ############################################################################################
+#TODO: will have to adjust this earlier on, but realised ordinal numerical categories like airway disease probably shouldn't be
+#  scaled (although now i removed scaling here but still potentially an issue for imputing - check the post-imputation data).
+#  possibly should be treated as categorical despite being numbers - e.g. don't want to impute a '3.5' between integer categories
+#  Should look over the data when I have more time, and check they look as expected.
+#  For now leaving but it needs to be checked/fixed.
+
 # Encode ordinal/binary data
 for cat in ordinal_cats.keys():
     # Extract codes from the category dtype
     X_train[cat] = X_train[cat].cat.codes
     X_test[cat] = X_test[cat].cat.codes
 
-    # Verify no missing values remain #todo might tweak this, haven't tested bc imputation
+    # Verify no missing values remain #todo might tweak this, haven't tested because of imputation memory issues
     assert X_train[cat].isna().sum() == 0
     assert X_test[cat].isna().sum() == 0
 
@@ -257,10 +258,9 @@ X_train.to_csv("Surrey_X_train.csv", sep=",", index=True)
 y_train.to_csv("Surrey_y_train.csv", sep=",", index=True)
 X_test.to_csv("Surrey_X_test.csv", sep=",", index=True)
 y_test.to_csv("Surrey_y_test.csv", sep=",", index=True)
-# TODO missing indexes
 
 #todo
-# UserWarning: Covid Positive Hospital Swab (Y/N) have very rare categories, it is a good idea to group these, or set
+# From imputation: UserWarning: Covid Positive Hospital Swab (Y/N) have very rare categories, it is a good idea to group these, or set
 # the min_data_in_leaf parameter to prevent lightgbm from outputting 0.0 probabilities.
 
 #Improve: sklearn pipeline could probably improve the layout - or functions

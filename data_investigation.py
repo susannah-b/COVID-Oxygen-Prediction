@@ -386,6 +386,20 @@ merged_null.to_csv("Missing_values_after_row_removal.csv", header=["Missing_Coun
 # IMPROVE: Verdict, some higher some lower, might be worth doing might not? Or do a lower filter than 8
 
 ### CLEAN UP COLUMN MISSINGNESS ########################################################################################
+# Plot missingness before filtering (full dataset)
+print(merged.columns[0:70])
+fig = msno.matrix(merged)
+fig_copy = fig.get_figure()
+fig_copy.savefig('Missingness_All-data_before_filtering.png', bbox_inches = 'tight')
+# Plot missingness of the metadata
+fig = msno.matrix(merged.iloc[:,0:32]) # IMPROVE think it's 70
+fig_copy = fig.get_figure()
+fig_copy.savefig('Missingness_All-metadata_before_filtering.png', bbox_inches = 'tight')
+# Plot missingness of the quant data
+fig = msno.matrix(merged.iloc[:,32:]) # IMPROVE think it's 70
+fig_copy = fig.get_figure()
+fig_copy.savefig('Missingness_All-quantdata_before_filtering.png', bbox_inches = 'tight')
+
 # Note: not imputing, just filtering for high missingness
 # Investigate null values #todo get back to column missingness but doing rows first
 if sample_inves_6:
@@ -408,7 +422,7 @@ merged_null = merged.isnull().sum().to_frame(name='Missing_Count')
 merged_null['Missing_Percentage'] = (merged_null['Missing_Count'] / len(merged)) * 100
 merged_null.to_csv("Missing_values_after_filtering.csv", header=["Missing_Count", "Missingness (%)"], float_format="%.1f")
 
-# Plot missingness after filtering (before is unreadable)
+# Plot missingness after filtering (full dataset)
 fig = msno.matrix(merged)
 fig_copy = fig.get_figure()
 fig_copy.savefig('Missingness_All-data_after_filtering.png', bbox_inches = 'tight')
@@ -417,7 +431,7 @@ fig = msno.matrix(merged.iloc[:,0:28]) # IMPROVE Now down to 28 columns of metad
 fig_copy = fig.get_figure()
 fig_copy.savefig('Missingness_All-metadata_after_filtering.png', bbox_inches = 'tight')
 # Plot missingness of the quant data
-fig = msno.matrix(merged.iloc[:,28:])
+fig = msno.matrix(merged.iloc[:,28:]) #improve think this is 518
 fig_copy = fig.get_figure()
 fig_copy.savefig('Missingness_All-quantdata_after_filtering.png', bbox_inches = 'tight')
 
