@@ -274,7 +274,7 @@ if show_testing:
         # Should look the same as before imputation (probably unecessary testing now code is defined but leaving in)
 
 ### ENCODE CATEGORICAL DATA ############################################################################################
-# Encode ordinal/binary data
+# Encode ordinal/binary data in X #IMPROVE can this be refined? eg sklearn OrdinalEncoder instead
 for cat in ordinal_cats.keys():
     # Extract codes from the category dtype
     X_train[cat] = X_train[cat].cat.codes
@@ -287,19 +287,14 @@ for cat in ordinal_cats.keys():
 # Note: This dataset does not currently have any nominal categories, but otherwise one-hot encode here. See mental
 # health data project for an example.
 
-# Encode y_train # IMPROVE currently fit separate label encoders to y_train and y_test, which could lead to inconsistent encoding if classes differ
+# Encode y data
 label_encoder = LabelEncoder()
 label_encoder.fit(y_train)
-y_encoded= label_encoder.transform(y_train)
+y_train_encoded= label_encoder.transform(y_train)
+y_test_encoded  = label_encoder.transform(y_test)
 # Convert back to df
-y_train = pd.DataFrame(y_encoded, index=y_train.index, columns=["O2 req."])
-
-# Encode y_test
-label_encoder = LabelEncoder()
-label_encoder.fit(y_test)
-y_encoded= label_encoder.transform(y_test)
-# Convert back to df
-y_test = pd.DataFrame(y_encoded, index=y_test.index, columns=["O2 req."])
+y_train = pd.DataFrame(y_train_encoded, index=y_train.index, columns=["O2 req."])
+y_test = pd.DataFrame(y_test_encoded, index=y_test.index, columns=["O2 req."])
 
 
 ### SAVE DATA ##########################################################################################################
