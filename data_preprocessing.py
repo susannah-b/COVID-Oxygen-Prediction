@@ -149,7 +149,7 @@ plt.savefig('Missing_by_intensity.png')
 # Result: Greater missingness at lower intensities suggests MNAR prevalence due to left censoring (below detection limit)
 
 # Bool whether to impute - can turn this off to skip for future runs
-impute = True
+impute = False
 
 imputed_train = "Surrey_train_after_imputation_scaling.csv"
 imputed_test = "Surrey_test_after_imputation_scaling.csv"
@@ -224,7 +224,7 @@ if impute:
     kernel = mf.ImputationKernel(data=test_missing, num_datasets=3, random_state=42) # TODO Could increase with more memory
 
     # Run MICE with 10 iterations
-    kernel.mice(iterations=5) # TODO was set to 10 but memory runs out, restore if running on HPC
+    kernel.mice(iterations=5, min_data_in_leaf=3) # TODO was set to 10 but memory runs out, restore if running on HPC
     # kernel.plot_feature_importance(dataset=0) #todo commenting plots to try and redce memory
     # kernel.plot_imputed_distributions()
     #

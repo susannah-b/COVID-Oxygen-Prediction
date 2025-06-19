@@ -25,9 +25,16 @@ import seaborn as sns
 from sklearn.metrics import roc_curve, auc, RocCurveDisplay
 # todo clean up at end
 
-# TODO Any other useful metrics to generate? Or adjust what I asses by
+# TODO Any other useful metrics to generate? Or adjust what I assess by
 
 # todo do i need to do anything with balancing classes?
+
+# Bool to show additional detail
+show_detail = False
+
+# Set pandas to display all columns and longer rows # IMPROVE remove in final version
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', 180)
 
 ### Read in data
 # Train
@@ -46,20 +53,17 @@ pd.set_option('display.max_columns', None)
 # TODO Saw a mention of VIF analysis, do I use that in conjunction with thresholding? Currently only do 0 variance thresholding though
 
 ### VARIANCE THRESHOLDING ##############################################################################################
-print("Feature count before thresholding:")
-print(len(X_train.columns))
+if show_detail:
+    print("Feature count before thresholding:", len(X_train.columns))
+
 #todo rushed through for speed - do properly later
- # todo also just set to 0 variance (which removes none of my data) and got a better result so leaving it at that for now
+
+ # IMPROVE currently set to 0 variance (which removes none of my data) and got a better result - can experiment with other values later. Since sample # is low it may be best with minimal filtering
 # Calculate median variance of all features
 variances = X_train.var(axis=0)
-#threshold = np.median(variances)
-#threshold = np.quantile(variances, 0.75) #todo experiment/research good threshold for mass spec
+#threshold = np.median(variances) # Example of thresholds - either delete or experiment with
+#threshold = np.quantile(variances, 0.75)
 threshold = 0.0
-
-#TODO: realised ordinal numerical categories like airway disease probably shouldn't be scaled (also does imputing affect this)
-#  possibly should be treated as categorical despite being numbers - e.g. don't want to impute a '3.5' between integer categories
-#  Should look over the data when I have more time, and check they look as expected.
-#  For now leaving but it needs to be checked/fixed.
 
 # Creating a preprocessing pipeline to scale and feature select through variance thresholding
 preprocessor = Pipeline([
@@ -80,8 +84,9 @@ var_thresh = preprocessor.named_steps['var_thresh']
 retained_mask = var_thresh.get_support()
 retained_features = X_train.columns[retained_mask]
 
-print("Features after thresholding:", len(retained_features))
-print("Retained features:", list(retained_features))
+if show_detail:
+    print("Features after thresholding:", len(retained_features))
+    print("Retained features:", list(retained_features))
 
 # Step 5: Convert back to DataFrames
 X_train = pd.DataFrame(X_train_transformed,
@@ -92,12 +97,15 @@ X_test = pd.DataFrame(X_test_transformed,
                      columns=retained_features,
                      index=X_test.index)
 
-print("Feature count after thresholding:")
-print(len(X_train.columns))
-print("Retained features:", list(X_train.columns))
+if show_detail:
+    print("Feature count after thresholding:", len(X_train.columns))
+    print("Retained features:", list(X_train.columns))
 # TODO Might be worth exerpimenting with keeping all metadata/doing different thresholds for proteins. or doing smarter methods than variance to pick up on subtle patterns
 
 ### DEFINE FEATURE SELECTION PER MODEL #################################################################################
+# Whether to do feature selection or not - applies to all steps (basic training, hyperparameter exploration, and final model training
+feature_selection = True
+
 # Define a dictionary mapping classifier types to their optimal feature selectors
 # TODO commenting out this version and replacing with another simpler one - needs full research and overhaul anyway
 # feature_selectors_dict = { # TODO: AI-gen-ed for quick options. Do research into actual best selection ethods for each model - knn/[and another] had to be replaced with sklearn native
@@ -153,84 +161,80 @@ feature_selectors_dict = {
 # WARNING get error in xgboost and it fails - investigate
 
 ### ESTIMATE BEST MODELS WITH BASIC SETTINGS ###########################################################################
-# Bool to decide whether to run the basic model training - if already know best candidates from results can skip
-basic_training = True #todo might remove and just always do depending on time to generate
 # Initialise dict
 model_scores = {}
 
 # Basic model training function to get some initial scores and decide which model to proceed with
-# IMPROVE add more model types?
+def basic_train(model, model_type, X_train, y_train, identifier, dict):
+    # Set feature selector based on model type
+    selector = feature_selectors_dict[model_type]
+    # Create a pipeline with feature selection and classifier - ensures same CV folds/feature selection
+    pipe = Pipeline([
+        ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
+        ('classifier', model)
+    ])
+    try:
+        # 10-fold cross validation for F1 score and accuracy
+        f1_val = cross_val_score(pipe, X_train, y_train, scoring='f1', cv=StratifiedKFold(10, shuffle=True, random_state=42))
+        accuracy_val = cross_val_score(pipe, X_train, y_train, scoring='accuracy', cv=StratifiedKFold(10, shuffle=True, random_state=42))
 
-if basic_training:
-    def basic_train(model, model_type, X_train, y_train, identifier, dict):
-        # Create a pipeline with feature selection and classifier - ensures same CV folds/feature selection
-        selector = feature_selectors_dict[model_type]
-        pipe = Pipeline([
-            ('feature_selector', selector),
-            ('classifier', model)
-        ])
-        try:
-            # 10-fold cross validation for F1 score and accuracy
-            f1_val = cross_val_score(pipe, X_train, y_train, scoring='f1', cv=StratifiedKFold(5, shuffle=True, random_state=42)) # todo is this meant to be 5
-            accuracy_val = cross_val_score(pipe, X_train, y_train, scoring='accuracy', cv=StratifiedKFold(10, shuffle=True, random_state=42))
+        # Fit the pipeline on the training data
+        pipe.fit(X_train, y_train)
+        y_pred = pipe.predict(X_train)
+        f1_train = f1_score(y_train, y_pred)
+        accuracy_train = accuracy_score(y_train, y_pred)
 
-            # Fit the pipeline on the training data
-            pipe.fit(X_train, y_train)
-            y_pred = pipe.predict(X_train)
-            f1_train = f1_score(y_train, y_pred)
-            accuracy_train = accuracy_score(y_train, y_pred)
+        dict[identifier] = [identifier, f1_train, f1_val.mean(), accuracy_train, accuracy_val.mean()]
+        print(f"Successfully trained {identifier}")
+    except Exception as e:
+        print(f"Error training {identifier}: {str(e)}")
+        dict[identifier] = [identifier, None, None, None, None]
 
-            dict[identifier] = [identifier, f1_train, f1_val.mean(), accuracy_train, accuracy_val.mean()]
-            print(f"Successfully trained {identifier}")
-        except Exception as e:
-            print(f"Error training {identifier}: {str(e)}")
-            dict[identifier] = [identifier, None, None, None, None]
+# Logistic Regression
+log_reg = LogisticRegression(penalty='l1', solver='saga', tol=1e-3) # TODO inrcreased tol from 1e-4, maybe remove this term to reset to default later when I can increase max_iter
+basic_train(log_reg, 'logreg', X_train, y_train, 'Logistic Regression', model_scores)
 
-    # Logistic Regression
-    log_reg = LogisticRegression(penalty='l1', solver='saga', tol=1e-3) # TODO inrcreased tol from 1e-4, maybe remove this term to reset to default later when I can increase max_iter
-    basic_train(log_reg, 'logreg', X_train, y_train, 'Logistic Regression', model_scores)
+# SVM
+svc_clf = SVC()
+basic_train(svc_clf, 'svm', X_train, y_train, 'Support Vector Classifier', model_scores)
 
-    # SVM
-    svc_clf = SVC()
-    basic_train(svc_clf, 'svm', X_train, y_train, 'Support Vector Classifier', model_scores)
+# Random Forest
+rnd_clf = RandomForestClassifier(random_state=42)
+basic_train(rnd_clf, 'rf', X_train, y_train, 'RandomForestClassifier', model_scores)
 
-    # Random Forest
-    rnd_clf = RandomForestClassifier(random_state=42)
-    basic_train(rnd_clf, 'rf', X_train, y_train, 'RandomForestClassifier', model_scores)
+# AdaBoost
+dt_clf_ada = DecisionTreeClassifier()
+ada_clf = AdaBoostClassifier(estimator=dt_clf_ada, random_state=42)
+basic_train(ada_clf, 'ada', X_train, y_train, "AdaBoost Classifier", model_scores)
 
-    # AdaBoost
-    dt_clf_ada = DecisionTreeClassifier()
-    ada_clf = AdaBoostClassifier(estimator=dt_clf_ada, random_state=42)
-    basic_train(ada_clf, 'ada', X_train, y_train, "AdaBoost Classifier", model_scores)
+# GradientBoosting
+gdb_clf = GradientBoostingClassifier(random_state=42, subsample=0.8)
+basic_train(gdb_clf, 'gb', X_train, y_train, "GradientBoosting Classifier", model_scores)
 
-    # GradientBoosting
-    gdb_clf = GradientBoostingClassifier(random_state=42, subsample=0.8)
-    basic_train(gdb_clf, 'gb', X_train, y_train, "GradientBoosting Classifier", model_scores)
+# XGBoost
+xgb_clf = XGBClassifier(verbosity=0)
+basic_train(xgb_clf, 'xgb', X_train, y_train, "XGBoost Classifier", model_scores)
 
-    # XGBoost
-    xgb_clf = XGBClassifier(verbosity=0)
-    basic_train(xgb_clf, 'xgb', X_train, y_train, "XGBoost Classifier", model_scores)
+# KNN
+knn_clf = KNeighborsClassifier()
+basic_train(knn_clf, 'knn', X_train, y_train, 'K-Nearest Neighbors Classifier', model_scores)
 
-    # KNN
-    knn_clf = KNeighborsClassifier()
-    basic_train(knn_clf, 'knn', X_train, y_train, 'K-Nearest Neighbors Classifier', model_scores)
+# Make dataframe of model scores and print results
+scores = pd.DataFrame.from_dict(model_scores, orient='index',
+                                columns=['Model', 'Train F1', 'Test F1', 'Train Accuracy',
+                                         'Test Accuracy']).reset_index(drop=True).sort_values(by='Test F1',
+                                                                                               ascending=False)
+# TODO '/Users/s.blundell/miniconda3/envs/O2_ML/lib/python3.12/site-packages/sklearn/linear_model/_sag.py:348: ConvergenceWarning: The max_iter was reached which means the coef_ did not converge
+#   warnings.warn('
+#  Should set max_iter higher, but also I think i'm supposed to scale here within a pipeline? (w FS and classifier)
 
-    # Make dataframe of model scores and print results
-    scores = pd.DataFrame.from_dict(model_scores, orient='index',
-                                    columns=['Model', 'Train F1', 'Test F1', 'Train Accuracy',
-                                             'Test Accuracy']).reset_index(drop=True).sort_values(by='Test F1',
-                                                                                                   ascending=False)
-    # TODO '/Users/s.blundell/miniconda3/envs/O2_ML/lib/python3.12/site-packages/sklearn/linear_model/_sag.py:348: ConvergenceWarning: The max_iter was reached which means the coef_ did not converge
-    #   warnings.warn('
-    #  Should set max_iter higher, but also I think i'm supposed to scale here within a pipeline? (w FS and classifier)
+print(scores.head(len(scores)))
+# Example printed result:
+# TODO paste in example output once feature selection is more pinned down
 
-    print(scores.head(len(scores)))
-    # Example printed result:
-    # TODO paste in example output once feature selection is more pinned down
+# TODO which perform best on test vs train F1 write here - currently svm and rf
 
-    # TODO which perform best on test vs train F1 write here - currently svm and rf
-
-    # todo: xgboost fails in test, and check if f1 score is best ranking, could test other models
+# todo: xgboost fails in test, and check if f1 score is best ranking, could test other models
 ### HYPEROPT PARAMETER TUNING ##########################################################################################
 # For selected models, define a parameter params['type'] for the model name. Then evaluates parameters and calculates the cross-validated accuracy.
 # Dictionary to store the best model accuracies
@@ -247,7 +251,8 @@ best_accuracies = { # warning need to pick the best models somewhere - is it jus
 def objective(params):
     classifier_type = params['type']
     del params['type']
-    selector = feature_selectors_dict[classifier_type] #todo: also tune FS hyperparams
+    # Set feature selector based on classifier type
+    selector = feature_selectors_dict[classifier_type] #todo: also tune FS hyperparams # WARNING this needs to be changed to a search space, not using the basic one. and feed into final training (ie delete feature_selectors_dict refs past basic training)
 
     # Build the classifier based on provided type and convert parameters that must be integers (hyperopt returns floats) if necessary
     if classifier_type == 'svm':
@@ -276,7 +281,7 @@ def objective(params):
 
     # Incorporate feature selection into the pipeline
     pipe = Pipeline([
-        ('feature_selector', selector),
+        ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
         ('classifier', clf)
     ])
 
@@ -349,7 +354,7 @@ with mlflow.start_run():
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=100,
+        max_evals=200, #todo: think this needs to be increased on a better machine
         trials=Trials()
     )
 
@@ -368,8 +373,9 @@ print(best_config_df)
 # Train final model using the full training data
 mlflow.sklearn.autolog()
 with mlflow.start_run():  # TODO need to find examples of this being done - unsure on the final training/testing after hyperopt tuning
-    classifier_type = best_config['type']
-    best_params = {k: v for k, v in best_config.items() if k != 'type'}
+    classifier_type = best_config['type'] # Extract best classifier type
+    best_params = {k: v for k, v in best_config.items() if k != 'type'} #Extract best hyperparameters
+    # Set feature selector based on classifier type
     selector = feature_selectors_dict[classifier_type]
 
     # Log the best hyperparameters
@@ -400,7 +406,7 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
 
     # Create the final pipeline with feature selection and classifier # TODO not sure if i need pipeline here since I dont feed into cross_val_score?
     final_pipeline = Pipeline([
-        ('feature_selector', selector),
+        ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
         ('classifier', classifier)
     ])
 
