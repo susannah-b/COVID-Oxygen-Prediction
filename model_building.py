@@ -1,18 +1,17 @@
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from scipy.datasets import ascent
 from sklearn.pipeline import Pipeline
 from sklearn.feature_selection import RFECV, SelectKBest
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
-from sklearn.model_selection import cross_val_score, StratifiedKFold
-from sklearn.model_selection import learning_curve, LearningCurveDisplay
-from sklearn.linear_model import LogisticRegression
-from sklearn.feature_selection import SelectFromModel
-from sklearn.feature_selection import f_classif, SelectKBest
-from sklearn.feature_selection import VarianceThreshold
+from sklearn.model_selection import cross_val_score, StratifiedKFold, learning_curve, LearningCurveDisplay
+from sklearn.linear_model import LogisticRegression, Lasso
+from sklearn.feature_selection import SelectFromModel, SequentialFeatureSelector, f_classif, SelectKBest, VarianceThreshold
 from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier, GradientBoostingClassifier
+from boruta import BorutaPy
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 from sklearn.svm import SVC, LinearSVC
@@ -140,119 +139,235 @@ feature_selection = True
 #
 # }
 
-feature_selectors_dict = {
-    'svm': SelectFromModel(LinearSVC(C=0.1, random_state=42, max_iter=2000)),
-    'rf': SelectFromModel(RandomForestClassifier(n_estimators=100,
-                                                max_depth=5,
-                                                random_state=42),
-                          threshold="median"),
-    'logreg': SelectFromModel(LogisticRegression(penalty="l1",
-                                                solver="saga",
-                                                C=0.1,
-                                                max_iter=2000,
-                                                random_state=42)),
-    'xgb': SelectFromModel(XGBClassifier(n_estimators=100,
-                                         max_depth=3,
-                                         random_state=42)),
-    'gb': SelectFromModel(GradientBoostingClassifier(random_state=42)),
-    'knn': SelectKBest(f_classif, k=20),  # Using statistical test instead of RFECV
-    'ada': SelectFromModel(AdaBoostClassifier(n_estimators=50, random_state=42))
-}
-# WARNING get error in xgboost and it fails - investigate
+# Dictionary of feature selectors to use in basic model training #TODO maybe you could have a params variable if you wanted to specify more. and another dict for param search space
+#    Feature selection methods taken from scikit-learn documentation # IMPROVE - methods were chosen to cover a wide range of approaches/models but could be tweaked further
+feature_selectors = {
+                     # 'RFECV_LR': RFECV(estimator=LogisticRegression(),
+                     #                step=1,
+                     #                cv=StratifiedKFold(5),
+                     #                scoring="accuracy",
+                     #                min_features_to_select=1,
+                     #                n_jobs=2),
+                     # 'RFECV_SVC': RFECV(estimator=SVC(),
+                     #                step=1,
+                     #                cv=StratifiedKFold(5),
+                     #                scoring="accuracy",
+                     #                min_features_to_select=1,
+                     #                n_jobs=2),
+                     # 'RFECV_RF': RFECV(estimator=RandomForestClassifier(),
+                     #                step=1,
+                     #                cv=StratifiedKFold(5),
+                     #                scoring="accuracy",
+                     #                min_features_to_select=1,
+                     #                n_jobs=2),
+                     # 'RFECV_XGB': RFECV(estimator=XGBClassifier(),
+                     #                step=1,
+                     #                cv=StratifiedKFold(5),
+                     #                scoring="accuracy",
+                     #                min_features_to_select=1,
+                     #                n_jobs=2),
+                     # 'SFM_LR': SelectFromModel(estimator=LogisticRegression(solver='saga', tol=1e-3, max_iter=200)),
+                     # 'SFM_SVC': SelectFromModel(estimator=SVC()),
+                     'SFM_RF': SelectFromModel(estimator=RandomForestClassifier(n_estimators=100, max_depth=5,random_state=42), threshold="median"), # todo added params to replicate prior results - remove or adjust all
+                     # 'SFM_XGB': SelectFromModel(estimator=XGBClassifier()),
+                     # 'SFM_LAS': SelectFromModel(estimator=Lasso()),
+                     # 'SFS_LR': SequentialFeatureSelector(estimator=LogisticRegression(), n_features_to_select=270, direction="forward"),
+                     # 'SFS_LSVC': SequentialFeatureSelector(estimator=LinearSVC(), n_features_to_select=270, direction="forward"),
+                     # 'SFS_XGB': SequentialFeatureSelector(estimator=XGBClassifier(), n_features_to_select=270, direction="forward"),
+                     # 'BORUTA': BorutaPy(estimator=RandomForestClassifier(), n_estimators='auto', max_iter=10),
+                     # 'NONE': 'passthrough'
+                     }
+
+# feature_selectors_dict = { #TODO delete
+#     'svm': SelectFromModel(LinearSVC(C=0.1, random_state=42, max_iter=2000)),
+#     'rf': SelectFromModel(RandomForestClassifier(n_estimators=100,
+#                                                 max_depth=5,
+#                                                 random_state=42),
+#                           threshold="median"),
+#     'logreg': SelectFromModel(LogisticRegression(penalty="l1",
+#                                                 solver="saga",
+#                                                 C=0.1,
+#                                                 max_iter=2000,
+#                                                 random_state=42)),
+#     'xgb': SelectFromModel(XGBClassifier(n_estimators=100,
+#                                          max_depth=3,
+#                                          random_state=42)),
+#     'gb': SelectFromModel(GradientBoostingClassifier(random_state=42)),
+#     'knn': SelectKBest(f_classif, k=20),  # Using statistical test instead of RFECV
+#     'ada': SelectFromModel(AdaBoostClassifier(n_estimators=50, random_state=42))
+# }
 
 ### ESTIMATE BEST MODELS WITH BASIC SETTINGS ###########################################################################
-# Initialise dict
-model_scores = {}
+# Bool to decide whether to go through the training of basic models to determine the most promising candidates/feature selectors
+basic_training = False
+
+# Initialise dict to store best results per model
+top_model_scores = {}
 
 # Basic model training function to get some initial scores and decide which model to proceed with
-def basic_train(model, model_type, X_train, y_train, identifier, dict):
-    # Set feature selector based on model type
-    selector = feature_selectors_dict[model_type]
-    # Create a pipeline with feature selection and classifier - ensures same CV folds/feature selection
-    pipe = Pipeline([
-        ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
-        ('classifier', model)
-    ])
-    try:
-        # 10-fold cross validation for F1 score and accuracy
-        f1_val = cross_val_score(pipe, X_train, y_train, scoring='f1', cv=StratifiedKFold(10, shuffle=True, random_state=42))
-        accuracy_val = cross_val_score(pipe, X_train, y_train, scoring='accuracy', cv=StratifiedKFold(10, shuffle=True, random_state=42))
+def basic_train(model, model_type, X_train, y_train, identifier, scores_dict): # TODO can remove model_type from here and function calls as no longer used
+    # Iterate over feature selectors
+    model_results = {}
+    for fs_name, selector in feature_selectors.items():
+        # Create a pipeline with feature selection and classifier - ensures same CV folds/feature selection
+        pipe = Pipeline([
+            ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
+            ('classifier', model)
+        ])
+        try:
+            # 10-fold cross validation for F1 score and accuracy
+            f1_val = cross_val_score(pipe, X_train, y_train, scoring='f1', cv=StratifiedKFold(10, shuffle=True, random_state=42))
+            accuracy_val = cross_val_score(pipe, X_train, y_train, scoring='accuracy', cv=StratifiedKFold(10, shuffle=True, random_state=42))
 
-        # Fit the pipeline on the training data
-        pipe.fit(X_train, y_train)
-        y_pred = pipe.predict(X_train)
-        f1_train = f1_score(y_train, y_pred)
-        accuracy_train = accuracy_score(y_train, y_pred)
+            # Fit the pipeline on the training data
+            pipe.fit(X_train, y_train)
+            y_pred = pipe.predict(X_train)
+            f1_train = f1_score(y_train, y_pred)
+            accuracy_train = accuracy_score(y_train, y_pred)
 
-        dict[identifier] = [identifier, f1_train, f1_val.mean(), accuracy_train, accuracy_val.mean()]
-        print(f"Successfully trained {identifier}")
-    except Exception as e:
-        print(f"Error training {identifier}: {str(e)}")
-        dict[identifier] = [identifier, None, None, None, None]
+            model_results[fs_name] = [identifier, fs_name, f1_train, f1_val.mean(), accuracy_train, accuracy_val.mean()]
+            print(f"Training of {identifier} using {fs_name} complete.")
+        except Exception as e:
+            print(f"Error training {identifier} with {fs_name}: {str(e)}")
+            model_results[identifier] = [identifier, None, None, None, None, None]
+    # Print results from best feature selection methods
+    model_results_df = pd.DataFrame.from_dict(model_results,
+                           orient='index',
+                           columns=['Model', 'Selector', 'Train F1', 'Test F1', 'Train Accuracy',
+                                    'Test Accuracy']).sort_values(by=['Test Accuracy'], ascending=False)
+    print(f"Metrics from {identifier} experimentation:")
+    print(model_results_df, "\n")
+    # Take the top result unless empty
+    if model_results_df.empty:
+        scores_dict[identifier] = [identifier, None, None, None, None, None]
+        print(f"All feature selection methods failed for {identifier}.")
+    else:
+        scores_dict[identifier] = model_results_df.iloc[0].to_list()
+    print(f"Finished training {identifier}")
 
-# Logistic Regression
-log_reg = LogisticRegression(penalty='l1', solver='saga', tol=1e-3) # TODO inrcreased tol from 1e-4, maybe remove this term to reset to default later when I can increase max_iter
-basic_train(log_reg, 'logreg', X_train, y_train, 'Logistic Regression', model_scores)
+# Determine which models to test
+logistic_regression = False
+SVM = False
+Random_forest = True
+AdaBoost = False
+Gradient_boosting = False
+XGBoost = False
+KNN = False
 
-# SVM
-svc_clf = SVC()
-basic_train(svc_clf, 'svm', X_train, y_train, 'Support Vector Classifier', model_scores)
+# # TODO version with all switched on - delete after testing:
+# logistic_regression = True
+# SVM = True
+# Random_forest = True
+# AdaBoost = True
+# Gradient_boosting = True
+# XGBoost = True
+# KNN = True
 
-# Random Forest
-rnd_clf = RandomForestClassifier(random_state=42)
-basic_train(rnd_clf, 'rf', X_train, y_train, 'RandomForestClassifier', model_scores)
+# Dictionary to store the highest performing models and their feature selection methods
+best_models_fs = {}
 
-# AdaBoost
-dt_clf_ada = DecisionTreeClassifier()
-ada_clf = AdaBoostClassifier(estimator=dt_clf_ada, random_state=42)
-basic_train(ada_clf, 'ada', X_train, y_train, "AdaBoost Classifier", model_scores)
+# Outline each model and perform the basic training function to evaluate performance of each
+if basic_training:
+    # Logistic Regression
+    if logistic_regression:
+        log_reg = LogisticRegression(solver='saga', tol=1e-3, max_iter=200) # Reduced tolerance vs default so coef_ can converge
+        basic_train(log_reg, 'logreg', X_train, y_train, 'Logistic Regression', top_model_scores)
 
-# GradientBoosting
-gdb_clf = GradientBoostingClassifier(random_state=42, subsample=0.8)
-basic_train(gdb_clf, 'gb', X_train, y_train, "GradientBoosting Classifier", model_scores)
+    # SVM
+    if SVM:
+        svc_clf = SVC()
+        basic_train(svc_clf, 'svm', X_train, y_train, 'Support Vector Classifier', top_model_scores)
 
-# XGBoost
-xgb_clf = XGBClassifier(verbosity=0)
-basic_train(xgb_clf, 'xgb', X_train, y_train, "XGBoost Classifier", model_scores)
+    # Random Forest
+    if Random_forest:
+        rnd_clf = RandomForestClassifier(random_state=42)
+        basic_train(rnd_clf, 'rf', X_train, y_train, 'RandomForestClassifier', top_model_scores)
 
-# KNN
-knn_clf = KNeighborsClassifier()
-basic_train(knn_clf, 'knn', X_train, y_train, 'K-Nearest Neighbors Classifier', model_scores)
+    # AdaBoost
+    if AdaBoost:
+        dt_clf_ada = DecisionTreeClassifier()
+        ada_clf = AdaBoostClassifier(estimator=dt_clf_ada, random_state=42)
+        basic_train(ada_clf, 'ada', X_train, y_train, "AdaBoost Classifier", top_model_scores)
 
-# Make dataframe of model scores and print results
-scores = pd.DataFrame.from_dict(model_scores, orient='index',
-                                columns=['Model', 'Train F1', 'Test F1', 'Train Accuracy',
-                                         'Test Accuracy']).reset_index(drop=True).sort_values(by='Test F1',
-                                                                                               ascending=False)
-# TODO '/Users/s.blundell/miniconda3/envs/O2_ML/lib/python3.12/site-packages/sklearn/linear_model/_sag.py:348: ConvergenceWarning: The max_iter was reached which means the coef_ did not converge
-#   warnings.warn('
-#  Should set max_iter higher, but also I think i'm supposed to scale here within a pipeline? (w FS and classifier)
+    # GradientBoosting
+    if Gradient_boosting:
+        gdb_clf = GradientBoostingClassifier(random_state=42, subsample=0.8)
+        basic_train(gdb_clf, 'gb', X_train, y_train, "GradientBoosting Classifier", top_model_scores)
 
-print(scores.head(len(scores)))
-# Example printed result:
+    # XGBoost
+    if XGBoost:
+        xgb_clf = XGBClassifier(verbosity=0)
+        basic_train(xgb_clf, 'xgb', X_train, y_train, "XGBoost Classifier", top_model_scores)
+
+    # KNN
+    if KNN:
+        knn_clf = KNeighborsClassifier()
+        basic_train(knn_clf, 'knn', X_train, y_train, 'K-Nearest Neighbors Classifier', top_model_scores)
+
+    # Make dataframe of model scores and print results
+    scores = pd.DataFrame.from_dict(top_model_scores,
+                                    orient='index',
+                                    columns=['Model', 'Selector', 'Train F1', 'Test F1', 'Train Accuracy',
+                                             'Test Accuracy']).reset_index(drop=True).sort_values(by='Test Accuracy', ascending=False)
+    # Print the top results for each model
+    print("\nBest results per model:")
+    print(scores.head(len(scores)))
+
+    ### Determine the best performing models to take to the tuning phase
+    # Initialise objects
+    n_models_to_tune = 1  # The top N models - change this as needed
+    # Extract best model and feature selection from top_model_scores
+    for i in range(0, n_models_to_tune):
+        model = scores.iloc[i, 0]
+        fs = scores.iloc[i, 1]
+        best_models_fs[model] = fs
+    # Print results
+    hypertune = pd.DataFrame(best_models_fs.items(), columns=['Model', 'Selector'])
+    print("\nThe models taken to the hyperparameter tuning stage are:\n", hypertune)
+else:
+    # Set model and feature selector that perform the best - do this manually by adding entries below based on the results of prior basic_training runs
+    best_models_fs["RandomForestClassifier"] = "SFM_RF"  # Note: example values included; not actual results
+    # ... continue as needed
+    hypertune = pd.DataFrame(best_models_fs.items(), columns=['Model', 'Selector'])
+    print("\nThe models taken to the hyperparameter tuning stage are:\n", hypertune)
+
+
+# Example printed result from basic training:
 # TODO paste in example output once feature selection is more pinned down
 
 # TODO which perform best on test vs train F1 write here - currently svm and rf
 
-# todo: xgboost fails in test, and check if f1 score is best ranking, could test other models
 ### HYPEROPT PARAMETER TUNING ##########################################################################################
-# For selected models, define a parameter params['type'] for the model name. Then evaluates parameters and calculates the cross-validated accuracy.
+# For selected models, define a parameter params['type'] for the model name. Then evaluate parameters and calculate the cross-validated accuracy.
+
 # Dictionary to store the best model accuracies
 best_accuracies = { # warning need to pick the best models somewhere - is it just here?
     'svm': 0.0,
     'rf': 0.0,
     'logreg': 0.0,
     'xgb': 0.0,
-    'gb': 0.0
+    'gb': 0.0,
+    'ada': 0.0,
+    'knn': 0.0
+    #todo why are ada and knn not here? i think i need to add each to the search space/objective too
 }
 
+type_translation = { # IMPROVE could just use the full name for simplicity
+    'svm': 'Support Vector Classifier',
+    'rf': 'RandomForestClassifier',
+    'logreg': 'Logistic Regression',
+    'xgb': 'XGBoost Classifier',
+    'gb': 'GradientBoosting Classifier',
+    'ada': 'AdaBoost Classifier',
+    'knn': 'K-Nearest Neighbors Classifier'
+    }
 
 # Objective function; which parameter configuation is used
 def objective(params):
     classifier_type = params['type']
     del params['type']
     # Set feature selector based on classifier type
-    selector = feature_selectors_dict[classifier_type] #todo: also tune FS hyperparams # WARNING this needs to be changed to a search space, not using the basic one. and feed into final training (ie delete feature_selectors_dict refs past basic training)
+    selector = feature_selectors[best_models_fs[type_translation[classifier_type]]]
 
     # Build the classifier based on provided type and convert parameters that must be integers (hyperopt returns floats) if necessary
     if classifier_type == 'svm':
@@ -276,6 +391,10 @@ def objective(params):
         params['min_samples_split'] = int(params['min_samples_split'])
         params['min_samples_leaf'] = int(params['min_samples_leaf'])
         clf = GradientBoostingClassifier(**params)
+    elif classifier_type == 'ada': #TODO ada and knn were recently added so not tested - e.g. which params need integer conversion as above
+        clf = AdaBoostClassifier(**params)
+    elif  classifier_type == 'knn':
+        clf = KNeighborsClassifier(**params)
     else:
         return {'loss': 1, 'status': STATUS_OK}
 
@@ -296,14 +415,21 @@ def objective(params):
     # Because fmin() tries to minimize the objective, this function must return the negative accuracy.
     return {'loss': -accuracy, 'status': STATUS_OK}
 
-# Define the search space over hyperparameters (for classifier only; feature selection is fixed) #TODO find more practical examples where these are defined; what is worth definining and what ranges?
-search_space = hp.choice('classifier_type', [ #todo commented out ones i'm not investigating but colud be done more elegantly - eg extract best X from basic train and automatically pick those. or keep all if doing on hpc
-    {
+### DEFINE SEARCH SPACES PER MODEL #####################################################################################
+  # Define each search space per model type. If in the top performing models (determined in basic train/manually), add to the overall search space #todo split whole code into sections more with headers - done here but need for the rest
+
+best_spaces = [] # Initialise list
+### Define space for each model #TODO find more practical examples where these are defined; what is worth definining and what ranges?
+# SVM
+if type_translation['svm'] in best_models_fs:
+    best_spaces.append({
         'type': 'svm',
         'C': hp.lognormal('SVM_C', 0, 1.0),
         'kernel': hp.choice('svm_kernel', ['linear', 'rbf'])
-    },
-    {
+    })
+# Random forest
+if type_translation['rf'] in best_models_fs:
+    best_spaces.append({
         'type': 'rf',
         'criterion': hp.choice('rf_criterion', ['gini', 'entropy']),
         'n_estimators': hp.quniform('rf_n_estimators', 50, 500, 50),
@@ -312,42 +438,67 @@ search_space = hp.choice('classifier_type', [ #todo commented out ones i'm not i
         'min_samples_leaf': hp.quniform('rf_min_samples_leaf', 1, 10, 1),
         'max_features': hp.choice('rf_max_features', ['sqrt', 'log2', 0.8]),
         'class_weight': hp.choice('rf_class_weight', [None, 'balanced'])
-    },
-    # {
-    #     'type': 'logreg',
-    #     'C': hp.lognormal('lr_C', 0, 1.0),
-    #     # 'solver': hp.choice('lr_solver', ['liblinear', 'lbfgs'])
-    #     'solver': 'saga',  # Force solver for elasticnet in feature selection
-    #     'penalty': 'elasticnet',
-    #     'l1_ratio': hp.uniform('l1_ratio', 0, 1),  # Required for ElasticNet
-    # },
-    # {
-    #     'type': 'xgb',
-    #     'max_depth': hp.quniform("xgb_max_depth", 3, 15, 1),
-    #     'gamma': hp.uniform('xgb_gamma', 0, 9),
-    #     'reg_alpha': hp.quniform('xgb_reg_alpha', 0, 10, 1),
-    #     'reg_lambda': hp.uniform('xgb_reg_lambda', 0, 10),
-    #     'colsample_bytree': hp.uniform('xgb_colsample_bytree', 0.6, 1),
-    #     'min_child_weight': hp.quniform('xgb_min_child_weight', 0, 12, 1),
-    #     'n_estimators': hp.quniform('xgb_n_estimators', 100, 500, 50),
-    #     'seed': 0,
-    #     'learning_rate': hp.uniform('xgb_learning_rate', 0.01, 0.3),
-    #     'scale_pos_weight': hp.uniform('xgb_scale_pos_weight', 1, 10)  # Adjust if classes are imbalanced
-    # },
-    # {
-    #     'type': 'gb',
-    #     'n_estimators': hp.quniform('gb_n_estimators', 50, 500, 50),
-    #     'max_depth': hp.quniform('gb_max_depth', 3, 15, 1),
-    #     'min_samples_split': hp.quniform('gb_min_samples_split', 2, 20, 1),
-    #     'min_samples_leaf': hp.quniform('gb_min_samples_leaf', 1, 10, 1),
-    #     'learning_rate': hp.loguniform('gb_learning_rate', np.log(0.005), np.log(0.2)),
-    #     'subsample': hp.uniform('gb_subsample', 0.6, 1.0),
-    #     'max_features': hp.choice('gb_max_features', ['sqrt', 'log2', 0.8]),
-    #     'loss': hp.choice('gb_loss', ['log_loss', 'exponential'])
-    # },
-])
+    })
+# Logitic regression
+if type_translation['logreg'] in best_models_fs:
+    best_spaces.append({
+        'type': 'logreg',
+        'C': hp.lognormal('lr_C', 0, 1.0),
+        # 'solver': hp.choice('lr_solver', ['liblinear', 'lbfgs'])
+        'solver': 'saga',  # Force solver for elasticnet in feature selection
+        'penalty': 'elasticnet',
+        'l1_ratio': hp.uniform('l1_ratio', 0, 1),  # Required for ElasticNet
+    })
+# XGBoost
+if type_translation['xgb'] in best_models_fs:
+    best_spaces.append({
+        'type': 'xgb',
+        'max_depth': hp.quniform("xgb_max_depth", 3, 15, 1),
+        'gamma': hp.uniform('xgb_gamma', 0, 9),
+        'reg_alpha': hp.quniform('xgb_reg_alpha', 0, 10, 1),
+        'reg_lambda': hp.uniform('xgb_reg_lambda', 0, 10),
+        'colsample_bytree': hp.uniform('xgb_colsample_bytree', 0.6, 1),
+        'min_child_weight': hp.quniform('xgb_min_child_weight', 0, 12, 1),
+        'n_estimators': hp.quniform('xgb_n_estimators', 100, 500, 50),
+        'seed': 0,
+        'learning_rate': hp.uniform('xgb_learning_rate', 0.01, 0.3),
+        'scale_pos_weight': hp.uniform('xgb_scale_pos_weight', 1, 10)  # Adjust if classes are imbalanced
+    })
+# Gradient Boosting
+if type_translation['gb'] in best_models_fs:
+    best_spaces.append({
+        'type': 'gb',
+        'n_estimators': hp.quniform('gb_n_estimators', 50, 500, 50),
+        'max_depth': hp.quniform('gb_max_depth', 3, 15, 1),
+        'min_samples_split': hp.quniform('gb_min_samples_split', 2, 20, 1),
+        'min_samples_leaf': hp.quniform('gb_min_samples_leaf', 1, 10, 1),
+        'learning_rate': hp.loguniform('gb_learning_rate', np.log(0.005), np.log(0.2)),
+        'subsample': hp.uniform('gb_subsample', 0.6, 1.0),
+        'max_features': hp.choice('gb_max_features', ['sqrt', 'log2', 0.8]),
+        'loss': hp.choice('gb_loss', ['log_loss', 'exponential'])
+    })
+# AdaBoost # WARNING Ada and KNN are untested - search spaces of these were omitted the first time - not sure if due to a reason or just missed out
+if type_translation['ada'] in best_models_fs:
+    best_spaces.append({
+        'type': 'ada',
+        'n_estimators': hp.quniform('ada_n_estimators', 50, 500, 50),
+        'learning_rate': hp.uniform('ada_learning_rate', 0.01, 1.0),
+        'base_estimator__max_depth': hp.quniform('ada_max_depth', 1, 5, 1),
+    })
+# K-Nearest Neighbors
+if type_translation['knn'] in best_models_fs:
+    best_spaces.append({
+        'type': 'knn',
+        'n_neighbors': hp.quniform('knn_n_neighbors', 1, 50, 1),
+        'weights': hp.choice('knn_weights', ['uniform', 'distance']),
+        'p': hp.choice('knn_p', [1, 2])
+    })
 
-print("Now tuning hyperparameters \n")
+
+# Define the search space over hyperparameters (for classifier only; feature selection is determined elsehwere)
+search_space = hp.choice('classifier_type', best_spaces)
+
+print("\nNow tuning hyperparameters\n")
 
 with mlflow.start_run():
     best_result = fmin(
@@ -376,7 +527,7 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
     classifier_type = best_config['type'] # Extract best classifier type
     best_params = {k: v for k, v in best_config.items() if k != 'type'} #Extract best hyperparameters
     # Set feature selector based on classifier type
-    selector = feature_selectors_dict[classifier_type]
+    selector = feature_selectors[best_models_fs[type_translation[classifier_type]]]
 
     # Log the best hyperparameters
     mlflow.log_params(best_config)
@@ -664,6 +815,8 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
 # TODO: Question: If I get different models (LR and GB currently) on different runs, what should I do? Pick one? Use the
 #  most common of multiple attempts? Or set seed so it's always consistent
 
+
+#TODO deleted notes in the code but possibly implement a FS search space
 
 # IMPROVE: Early stopping isn't implemented at all because it would work for some and not others so is more complicated to implement - but could add.
 #  Could also do an ensemble model approach for the final training, and stacking/voting
