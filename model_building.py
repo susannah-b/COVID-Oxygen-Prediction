@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import roc_curve, auc, RocCurveDisplay
 from mlflow.models.signature import infer_signature
-
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 # todo clean up at end
 
 # TODO Any other useful metrics to generate? Or adjust what I assess by
@@ -33,6 +33,7 @@ from mlflow.models.signature import infer_signature
 # Bool to show additional detail
 show_detail = False
 
+### READ IN DATA #######################################################################################################
 # Set pandas to display all columns and longer rows # IMPROVE remove in final version
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 180)
@@ -123,7 +124,7 @@ if show_detail:
     print("Features after thresholding:", len(retained_features))
     print("Retained features:", list(retained_features))
 
-# Step 5: Convert back to DataFrames
+# Convert back to DataFrames
 X_train = pd.DataFrame(X_train_transformed,
                       columns=retained_features,
                       index=X_train.index)
@@ -136,6 +137,28 @@ if show_detail:
     print("Feature count after thresholding:", len(X_train.columns))
     print("Retained features:", list(X_train.columns))
 
+### VARIANCE INFLATION FACTOR ANALYSIS #################################################################################
+# Note: currently nothing further is done with these results. The values are very high and across the entire dataset which is a problem for linear regression models: could be bypassed by omitting linear regression models (logistic regression)
+#   WARNING for final results switch off logistic regression
+# Make dataframe for results
+vif_data = pd.DataFrame()
+vif_data["feature"] = X_train.columns
+
+if show_detail:
+    # Do VIF analysis
+    vif_data["VIF"] = [variance_inflation_factor(X_train.values, i) for i in range(len(X_train.columns))]
+
+    # Filter to any VIF above 5 to examine multicolinear features
+    high_vif_data = vif_data[vif_data['VIF'] >= 5]
+
+    # Sort and display results
+    print("\nVIF Results (features with VIF over 5):\n", high_vif_data.sort_values(by="VIF", ascending=True))
+    print("\nFull dataset length including low VIF scores:", len(vif_data))
+
+    #  Check matrix rank
+    matrix_rank = np.linalg.matrix_rank(X_train)
+    print(f"\nMatrix rank: {matrix_rank}/{X_train.shape[1]} features are linearly independent")
+
 ### DEFINE FEATURE SELECTION PER MODEL #################################################################################
 # Whether to do feature selection or not - applies to all steps (basic training, hyperparameter exploration, and final model training
 feature_selection = True
@@ -144,6 +167,7 @@ feature_selection = True
 
 # Dictionary of feature selectors to use in basic model training #TODO maybe you could have a params variable if you wanted to specify more. and another dict for param search space
 #    Feature selection methods taken from scikit-learn documentation # IMPROVE - methods were chosen to cover a wide range of approaches/models but could be tweaked further
+# todo: have collapsed code below for ease of use and put a simplied FS dict in for now: but need to expand all and fully test FS
 feature_selectors = {
                      # 'RFECV_LR': RFECV(estimator=LogisticRegression(),
                      #                step=1,
@@ -200,9 +224,10 @@ feature_selectors = {
 #     'ada': SelectFromModel(AdaBoostClassifier(n_estimators=50, random_state=42))
 # }
 
+
 ### ESTIMATE BEST MODELS WITH BASIC SETTINGS ###########################################################################
 # Bool to decide whether to go through the training of basic models to determine the most promising candidates/feature selectors
-basic_training = True
+basic_training = False #TODO: Currently disabled and top model number set to 1 to just test the script with the RF model only for speed
 
 # Initialise dict to store best results per model
 top_model_scores = {}
@@ -318,7 +343,7 @@ if basic_training:
 
     ### Determine the best performing models to take to the tuning phase
     # Initialise objects
-    n_models_to_tune = 1  # The top N models - change this as needed # TODO  disable basic train to just test with RF as previous
+    n_models_to_tune = 1  # The top N models - change this as needed
     # Extract best model and feature selection from top_model_scores
     for i in range(0, n_models_to_tune):
         model = scores.iloc[i, 0]
@@ -422,7 +447,7 @@ def objective(params):
   # Define each search space per model type. If in the top performing models (determined in basic train/manually), add to the overall search space #todo split whole code into sections more with headers - done here but need for the rest
 
 best_spaces = [] # Initialise list
-### Define space for each model #TODO find more practical examples where these are defined; what is worth definining and what ranges? - google tuning [model]
+### Define space for each model
 # SVM
 if type_translation['svm'] in best_models_fs:
     best_spaces.append({
@@ -488,9 +513,8 @@ if type_translation['gb'] in best_models_fs:
         'loss': hp.choice('gb_loss', ['log_loss', 'exponential']),
         'criterion': hp.choice('gb_criterion', ['friedman_mse', 'squared_error']),
         'random_state': 42,
-        # IMPROVE - more tunable features; see sklearn documentation
     })
-# AdaBoost # WARNING Ada and KNN are untested - search spaces of these were omitted the first time - not sure if due to a reason or just missed out
+# AdaBoost
 if type_translation['ada'] in best_models_fs:
     best_spaces.append({
         'type': 'ada',
@@ -526,7 +550,7 @@ with mlflow.start_run():
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=50, #todo: think this needs to be increased on a better machine
+        max_evals=50, #todo: increase on a better machine
         trials=Trials()
     )
 
@@ -575,7 +599,7 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
         best_params['min_samples_split'] = int(best_params['min_samples_split'])
         best_params['min_samples_leaf'] = int(best_params['min_samples_leaf'])
         classifier = GradientBoostingClassifier(**best_params)
-    elif classifier_type == 'ada': #TODO ada and knn were recently added so not tested - e.g. which params need integer conversion as abov
+    elif classifier_type == 'ada':
         best_params['n_estimators'] = int(best_params['n_estimators'])
         classifier = AdaBoostClassifier(**best_params)
     elif  classifier_type == 'knn':
@@ -674,7 +698,7 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
     # Grab the fitted selector step
     sel = final_pipeline.named_steps['feature_selector']
 
-    # If it’s a scikit‐learn selector (RFECV, SelectKBest, etc.), you can use .get_support() # todo make compatible with all
+    # If it’s a scikit‐learn selector (RFECV, SelectKBest, etc.), you can use .get_support() # todo make compatible with all (update: should be all, except boruta)
     mask = sel.get_support()  # boolean mask of length n_features
 
     # Apply that mask to the original feature names
@@ -720,7 +744,7 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
         print(f"\nTop 10 most important features:")
         print(importance_df.head(10))
 
-    elif classifier_type == 'svm' and best_params.get('kernel') == 'linear': #todo ??
+    elif classifier_type == 'svm' and best_params.get('kernel') == 'linear':
         # For linear SVM, we can extract coefficients
         coefficients = np.abs(final_pipeline.named_steps['classifier'].coef_[0])
 
@@ -843,14 +867,8 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
 # Test accuracy with best model (rf): 0.6000
 # Test F1 score with best model (rf): 0.6957
 
-
-# TODO: Question: If I get different models (LR and GB currently) on different runs, what should I do? Pick one? Use the
-#  most common of multiple attempts? Or set seed so it's always consistent
-
-
 #TODO deleted notes in the code but possibly implement a FS search space
 
 # IMPROVE: Early stopping isn't implemented at all because it would work for some and not others so is more complicated to implement - but could add.
 #  Could also do an ensemble model approach for the final training, and stacking/voting
-#  More elegant way to handle hyperopt returning floats?
 
