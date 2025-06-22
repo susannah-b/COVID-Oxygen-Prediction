@@ -48,14 +48,16 @@ meta_columns = s_meta.columns.tolist()
 existing_columns = X_train.columns.tolist()
 # Work backwards through the list to find the first one still present
 meta_cols = 0 # Initialise
+matched = False
 for col in reversed(meta_columns):
     if col in existing_columns:
+        matched = True
         if show_testing:
             print("\nRemaining metadata columns:")
             print(X_train.columns.get_loc(col) + 1) # +1 for 1-based indexing conversion / allows for splicing where the first number is inclusive and the second exclusive
         meta_cols = X_train.columns.get_loc(col) + 1
         break
-else:
+if not matched:
     if show_testing:
         print("All metadata columns were removed by the missingness filter.")
     meta_cols = 0

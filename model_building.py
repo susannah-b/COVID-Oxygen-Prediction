@@ -22,6 +22,8 @@ import joblib
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import roc_curve, auc, RocCurveDisplay
+from mlflow.models.signature import infer_signature
+
 # todo clean up at end
 
 # TODO Any other useful metrics to generate? Or adjust what I assess by
@@ -51,11 +53,45 @@ pd.set_option('display.max_columns', None)
 
 # TODO Saw a mention of VIF analysis, do I use that in conjunction with thresholding? Currently only do 0 variance thresholding though
 
+### OPTIONAL: DROP METADATA ############################################################################################ #TODO once the model is finished and can run on HPC, run with and without dropping to comapre results
+drop_metadata = True # To experiment with excluding metadata from the model, enable this option
+
+# Read in the original metadata file to read the column info
+s_meta_file = Path(__file__).parent / "Surrey_Files" / "Surrey_Metadata_master_spreadsheet_130622_edit2.csv"
+s_meta = pd.read_csv(s_meta_file)
+# List starting and filtered columns
+meta_columns = s_meta.columns.tolist()
+
+meta_cols = 0 # Initialise
+# Detect metadata columns in the dataset
+def count_meta(dataset, name, metadata_features, drop):
+    matched = False # Initialise
+    existing_columns = dataset.columns.tolist()
+    col_number = 0 # Initialise
+    for col in reversed(metadata_features):
+        if col in existing_columns:
+            matched = True
+            if show_detail:
+                print(f"\nMetadata columns in {name}:")
+                print(dataset.columns.get_loc(col) + 1) # +1 for 1-based indexing conversion / allows for splicing where the first number is inclusive and the second exclusive
+            col_number = dataset.columns.get_loc(col) + 1
+            break
+    if not matched:
+        if show_detail:
+            print("No metadata columns found.")
+    if drop: # Drop the metadata if bool is true
+        dataset = dataset.iloc[:, col_number:]
+        col_number = 0 # Now removed all metadata so count is 0
+        print("Metadata was dropped from the dataset; if unintended, disable drop_metadata in the script.")
+    return col_number,dataset
+
+# Call function
+meta_cols,X_train = count_meta(X_train, "X_train", meta_columns, drop_metadata)
+meta_cols,X_test = count_meta(X_test, "X_test", meta_columns, drop_metadata) # Colummn # should be identical for test and train, so can just reassign
+
 ### VARIANCE THRESHOLDING ##############################################################################################
 if show_detail:
     print("Feature count before thresholding:", len(X_train.columns))
-
-#todo rushed through for speed - do properly later
 
  # IMPROVE currently set to 0 variance (which removes none of my data) and got a better result - can experiment with other values later. Since sample # is low it may be best with minimal filtering
 # Calculate median variance of all features
@@ -99,45 +135,12 @@ X_test = pd.DataFrame(X_test_transformed,
 if show_detail:
     print("Feature count after thresholding:", len(X_train.columns))
     print("Retained features:", list(X_train.columns))
-# TODO Might be worth exerpimenting with keeping all metadata/doing different thresholds for proteins. or doing smarter methods than variance to pick up on subtle patterns
 
 ### DEFINE FEATURE SELECTION PER MODEL #################################################################################
 # Whether to do feature selection or not - applies to all steps (basic training, hyperparameter exploration, and final model training
 feature_selection = True
 
 # Define a dictionary mapping classifier types to their optimal feature selectors
-# TODO commenting out this version and replacing with another simpler one - needs full research and overhaul anyway
-# feature_selectors_dict = { # TODO: AI-gen-ed for quick options. Do research into actual best selection ethods for each model - knn/[and another] had to be replaced with sklearn native
-#     'svm': SelectFromModel(LinearSVC(C=0.1, random_state=42, max_iter=1000)), # todo had to change linear svc to regular svc, removed l1 penalty. but will research better FS later and redo all
-#     'rf': SelectFromModel(RandomForestClassifier(n_estimators=100,
-#                                                  max_depth=5,
-#                                                  random_state=42),
-#                                                  threshold="median"
-#                           ),
-#     'logreg': SelectFromModel(LogisticRegression(penalty="elasticnet",
-#                                                     solver="saga",
-#                                                     l1_ratio=0.5,  # Mix of L1/L2
-#                                                     C=0.1,
-#                                                     random_state=42
-#                                                  )
-#                               ),
-#     'xgb': RFECV(estimator=XGBClassifier(n_estimators=100, max_depth=3),
-#                                         step=1,
-#                                         cv=StratifiedKFold(3),
-#                                         scoring="f1"
-#                                         ),
-#     'gb': SelectFromModel(GradientBoostingClassifier(random_state=42)),
-#     'knn': RFECV(estimator=RandomForestClassifier(random_state=42),
-#                  step=1, cv=StratifiedKFold(5, shuffle=True, random_state=42),
-#                  scoring='f1', min_features_to_select=1
-#                  ),
-#     'ada': RFECV(estimator=RandomForestClassifier(n_estimators=50, max_depth=3, random_state=42),
-#         step=1,
-#         cv=StratifiedKFold(3),
-#         scoring="f1"
-#     )
-#
-# }
 
 # Dictionary of feature selectors to use in basic model training #TODO maybe you could have a params variable if you wanted to specify more. and another dict for param search space
 #    Feature selection methods taken from scikit-learn documentation # IMPROVE - methods were chosen to cover a wide range of approaches/models but could be tweaked further
@@ -168,7 +171,7 @@ feature_selectors = {
                      #                n_jobs=2),
                      # 'SFM_LR': SelectFromModel(estimator=LogisticRegression(solver='saga', tol=1e-3, max_iter=200)),
                      # 'SFM_SVC': SelectFromModel(estimator=SVC()),
-                     'SFM_RF': SelectFromModel(estimator=RandomForestClassifier(n_estimators=100, max_depth=5,random_state=42), threshold="median"), # todo added params to replicate prior results - remove or adjust all
+                     'SFM_RF': SelectFromModel(estimator=RandomForestClassifier(n_estimators=100, max_depth=5,random_state=42), threshold="median"), # todo added params to replicate prior results - should experiment with all options
                      # 'SFM_XGB': SelectFromModel(estimator=XGBClassifier()),
                      # 'SFM_LAS': SelectFromModel(estimator=Lasso()),
                      # 'SFS_LR': SequentialFeatureSelector(estimator=LogisticRegression(), n_features_to_select=270, direction="forward"),
@@ -178,7 +181,7 @@ feature_selectors = {
                      # 'NONE': 'passthrough'
                      }
 
-# feature_selectors_dict = { #TODO delete
+# feature_selectors_dict = { # WARNING delete
 #     'svm': SelectFromModel(LinearSVC(C=0.1, random_state=42, max_iter=2000)),
 #     'rf': SelectFromModel(RandomForestClassifier(n_estimators=100,
 #                                                 max_depth=5,
@@ -199,13 +202,13 @@ feature_selectors = {
 
 ### ESTIMATE BEST MODELS WITH BASIC SETTINGS ###########################################################################
 # Bool to decide whether to go through the training of basic models to determine the most promising candidates/feature selectors
-basic_training = False
+basic_training = True
 
 # Initialise dict to store best results per model
 top_model_scores = {}
 
 # Basic model training function to get some initial scores and decide which model to proceed with
-def basic_train(model, model_type, X_train, y_train, identifier, scores_dict): # TODO can remove model_type from here and function calls as no longer used
+def basic_train(model, X_train, y_train, identifier, scores_dict):
     # Iterate over feature selectors
     model_results = {}
     for fs_name, selector in feature_selectors.items():
@@ -248,13 +251,13 @@ def basic_train(model, model_type, X_train, y_train, identifier, scores_dict): #
 # Determine which models to test
 logistic_regression = False
 SVM = False
-Random_forest = True
-AdaBoost = False
+Random_forest = False
+AdaBoost = True
 Gradient_boosting = False
 XGBoost = False
 KNN = False
 
-# # TODO version with all switched on - delete after testing:
+#  WARNING version with all switched on - delete after testing:
 # logistic_regression = True
 # SVM = True
 # Random_forest = True
@@ -271,38 +274,38 @@ if basic_training:
     # Logistic Regression
     if logistic_regression:
         log_reg = LogisticRegression(solver='saga', tol=1e-3, max_iter=200) # Reduced tolerance vs default so coef_ can converge
-        basic_train(log_reg, 'logreg', X_train, y_train, 'Logistic Regression', top_model_scores)
+        basic_train(log_reg, X_train, y_train, 'Logistic Regression', top_model_scores)
 
     # SVM
     if SVM:
         svc_clf = SVC()
-        basic_train(svc_clf, 'svm', X_train, y_train, 'Support Vector Classifier', top_model_scores)
+        basic_train(svc_clf, X_train, y_train, 'Support Vector Classifier', top_model_scores)
 
     # Random Forest
     if Random_forest:
         rnd_clf = RandomForestClassifier(random_state=42)
-        basic_train(rnd_clf, 'rf', X_train, y_train, 'RandomForestClassifier', top_model_scores)
+        basic_train(rnd_clf, X_train, y_train, 'RandomForestClassifier', top_model_scores)
 
     # AdaBoost
     if AdaBoost:
         dt_clf_ada = DecisionTreeClassifier()
         ada_clf = AdaBoostClassifier(estimator=dt_clf_ada, random_state=42)
-        basic_train(ada_clf, 'ada', X_train, y_train, "AdaBoost Classifier", top_model_scores)
+        basic_train(ada_clf, X_train, y_train, "AdaBoost Classifier", top_model_scores)
 
     # GradientBoosting
     if Gradient_boosting:
         gdb_clf = GradientBoostingClassifier(random_state=42, subsample=0.8)
-        basic_train(gdb_clf, 'gb', X_train, y_train, "GradientBoosting Classifier", top_model_scores)
+        basic_train(gdb_clf, X_train, y_train, "GradientBoosting Classifier", top_model_scores)
 
     # XGBoost
     if XGBoost:
         xgb_clf = XGBClassifier(verbosity=0)
-        basic_train(xgb_clf, 'xgb', X_train, y_train, "XGBoost Classifier", top_model_scores)
+        basic_train(xgb_clf, X_train, y_train, "XGBoost Classifier", top_model_scores)
 
     # KNN
     if KNN:
         knn_clf = KNeighborsClassifier()
-        basic_train(knn_clf, 'knn', X_train, y_train, 'K-Nearest Neighbors Classifier', top_model_scores)
+        basic_train(knn_clf, X_train, y_train, 'K-Nearest Neighbors Classifier', top_model_scores)
 
     # Make dataframe of model scores and print results
     scores = pd.DataFrame.from_dict(top_model_scores,
@@ -315,7 +318,7 @@ if basic_training:
 
     ### Determine the best performing models to take to the tuning phase
     # Initialise objects
-    n_models_to_tune = 1  # The top N models - change this as needed
+    n_models_to_tune = 1  # The top N models - change this as needed # TODO  disable basic train to just test with RF as previous
     # Extract best model and feature selection from top_model_scores
     for i in range(0, n_models_to_tune):
         model = scores.iloc[i, 0]
@@ -333,15 +336,13 @@ else:
 
 
 # Example printed result from basic training:
-# TODO paste in example output once feature selection is more pinned down
-
-# TODO which perform best on test vs train F1 write here - currently svm and rf
+# TODO paste in example output once feature selection is more pinned down/state which perform the best
 
 ### HYPEROPT PARAMETER TUNING ##########################################################################################
 # For selected models, define a parameter params['type'] for the model name. Then evaluate parameters and calculate the cross-validated accuracy.
 
 # Dictionary to store the best model accuracies
-best_accuracies = { # warning need to pick the best models somewhere - is it just here?
+best_accuracies = {
     'svm': 0.0,
     'rf': 0.0,
     'logreg': 0.0,
@@ -349,10 +350,9 @@ best_accuracies = { # warning need to pick the best models somewhere - is it jus
     'gb': 0.0,
     'ada': 0.0,
     'knn': 0.0
-    #todo why are ada and knn not here? i think i need to add each to the search space/objective too
 }
 
-type_translation = { # IMPROVE could just use the full name for simplicity
+type_translation = { # IMPROVE could just use the full name for simplicity and remove this
     'svm': 'Support Vector Classifier',
     'rf': 'RandomForestClassifier',
     'logreg': 'Logistic Regression',
@@ -392,6 +392,9 @@ def objective(params):
         params['min_samples_leaf'] = int(params['min_samples_leaf'])
         clf = GradientBoostingClassifier(**params)
     elif classifier_type == 'ada': #TODO ada and knn were recently added so not tested - e.g. which params need integer conversion as above
+        max_depth = int(params.pop('max_depth')) # max_depth is a parameter of the estimator param (model) so remove from params dict/search space and use here instead
+        params['n_estimators'] = int(params['n_estimators'])
+        params['estimator'] = DecisionTreeClassifier(max_depth=max_depth) # Create the base estimator param to explore using max_depth
         clf = AdaBoostClassifier(**params)
     elif  classifier_type == 'knn':
         clf = KNeighborsClassifier(**params)
@@ -419,7 +422,7 @@ def objective(params):
   # Define each search space per model type. If in the top performing models (determined in basic train/manually), add to the overall search space #todo split whole code into sections more with headers - done here but need for the rest
 
 best_spaces = [] # Initialise list
-### Define space for each model #TODO find more practical examples where these are defined; what is worth definining and what ranges?
+### Define space for each model #TODO find more practical examples where these are defined; what is worth definining and what ranges? - google tuning [model]
 # SVM
 if type_translation['svm'] in best_models_fs:
     best_spaces.append({
@@ -439,7 +442,7 @@ if type_translation['rf'] in best_models_fs:
         'max_features': hp.choice('rf_max_features', ['sqrt', 'log2', 0.8]),
         'class_weight': hp.choice('rf_class_weight', [None, 'balanced'])
     })
-# Logitic regression
+# Logistic regression
 if type_translation['logreg'] in best_models_fs:
     best_spaces.append({
         'type': 'logreg',
@@ -481,9 +484,9 @@ if type_translation['gb'] in best_models_fs:
 if type_translation['ada'] in best_models_fs:
     best_spaces.append({
         'type': 'ada',
-        'n_estimators': hp.quniform('ada_n_estimators', 50, 500, 50),
-        'learning_rate': hp.uniform('ada_learning_rate', 0.01, 1.0),
-        'base_estimator__max_depth': hp.quniform('ada_max_depth', 1, 5, 1),
+        'n_estimators': hp.quniform('ada_n_estimators', 30, 1030, 50),
+        'learning_rate': hp.uniform('ada_learning_rate', 0.1, 1.0),
+        'max_depth': hp.quniform('ada_max_depth', 1, 10, 1)
     })
 # K-Nearest Neighbors
 if type_translation['knn'] in best_models_fs:
@@ -505,7 +508,7 @@ with mlflow.start_run():
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=200, #todo: think this needs to be increased on a better machine
+        max_evals=50, #todo: think this needs to be increased on a better machine
         trials=Trials()
     )
 
@@ -554,6 +557,14 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
         best_params['min_samples_split'] = int(best_params['min_samples_split'])
         best_params['min_samples_leaf'] = int(best_params['min_samples_leaf'])
         classifier = GradientBoostingClassifier(**best_params)
+    elif classifier_type == 'ada': #TODO ada and knn were recently added so not tested - e.g. which params need integer conversion as abov
+        max_depth = int(best_params.pop('max_depth')) # Remove param from best params as it is a parameter of the 'estimator' and not AdaBoost itself
+        best_params['n_estimators'] = int(best_params['n_estimators'])
+        best_params['estimator'] = DecisionTreeClassifier(max_depth=max_depth)
+        classifier = AdaBoostClassifier(**best_params)
+    elif  classifier_type == 'knn':
+        #todo put best params in
+        clf = KNeighborsClassifier(**best_params)
 
     # Create the final pipeline with feature selection and classifier # TODO not sure if i need pipeline here since I dont feed into cross_val_score?
     final_pipeline = Pipeline([
@@ -573,8 +584,12 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
     except:
         print("Unable to print features - see note in code.")
 
-    # Log the final pipeline model
-    mlflow.sklearn.log_model(final_pipeline, "best_model")
+    ### Log the final pipeline model
+    # Create input example
+    input_example = X_train.iloc[:1]
+    # Infer model signature
+    signature = infer_signature(X_train, final_pipeline.predict(X_train))
+    mlflow.sklearn.log_model(final_pipeline, "best_model", signature=signature, input_example=input_example)
 
     # Save final model #todo not sure what to do with this yet but worth saving - or does mlflow save?
     joblib.dump(final_pipeline, "Oxygen_Prediction_Model.joblib")
@@ -688,7 +703,7 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
         print(f"\nTop 10 most important features:")
         print(importance_df.head(10))
 
-    elif classifier_type == 'svm' and best_params.get('kernel') == 'linear':
+    elif classifier_type == 'svm' and best_params.get('kernel') == 'linear': #todo ??
         # For linear SVM, we can extract coefficients
         coefficients = np.abs(final_pipeline.named_steps['classifier'].coef_[0])
 
