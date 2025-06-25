@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from scipy.datasets import ascent
+from sklearn.inspection import permutation_importance
 from sklearn.pipeline import Pipeline
 from sklearn.feature_selection import RFECV, SelectKBest
 from sklearn.tree import DecisionTreeClassifier
@@ -24,12 +25,20 @@ import seaborn as sns
 from sklearn.metrics import roc_curve, auc, RocCurveDisplay
 from mlflow.models.signature import infer_signature
 from statsmodels.stats.outliers_influence import variance_inflation_factor
-from imblearn.over_sampling import SMOTE
+from sklearn.base import BaseEstimator, TransformerMixin
+import warnings
+
 # todo clean up at end
 
 # TODO Any other useful metrics to generate? Or adjust what I assess by
 
 # todo do i need to do anything with balancing classes?
+
+# WARNING - suppress MLflow warning and precision warning - fix later
+from mlflow.exceptions import MlflowException
+warnings.filterwarnings("ignore", category=UserWarning, module="mlflow.types.utils")
+from sklearn.exceptions import UndefinedMetricWarning
+warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
 # Bool to show additional detail
 show_detail = False
@@ -90,51 +99,13 @@ meta_cols,X_train = count_meta(X_train, "X_train", meta_columns, drop_metadata)
 meta_cols,X_test = count_meta(X_test, "X_test", meta_columns, drop_metadata) # Colummn # should be identical for test and train, so can just reassign
 
 ### VARIANCE THRESHOLDING ##############################################################################################
-if show_detail:
-    print("Feature count before thresholding:", len(X_train.columns))
-
+  # Applied in the scikit-learn pipeline
  # IMPROVE currently set to 0 variance (which removes none of my data) and got a better result - can experiment with other values later. Since sample # is low it may be best with minimal filtering
 # Calculate median variance of all features
 variances = X_train.var(axis=0)
 #threshold = np.median(variances) # Example of thresholds - either delete or experiment with
 #threshold = np.quantile(variances, 0.75)
 threshold = 1e-10 # Effectively zero but avoids floating-point issues
-
-# Creating a preprocessing pipeline to scale and feature select through variance thresholding
-preprocessor = Pipeline([
-    ('var_thresh', VarianceThreshold(threshold=threshold)),
-    ('scaler', StandardScaler())
-])
-#todo i'm transforming data with a preprocessor outside of the main modeling pipeline, which could lead to data leakage. implement as one pipeline
-
-# Fit on training data and transform test data
-X_train_transformed = preprocessor.fit_transform(X_train)
-X_test_transformed = preprocessor.transform(X_test)
-
-# Track retained features
-scaler = preprocessor.named_steps['scaler']
-var_thresh = preprocessor.named_steps['var_thresh']
-
-# Get feature mask after both scaling and thresholding
-retained_mask = var_thresh.get_support()
-retained_features = X_train.columns[retained_mask]
-
-if show_detail:
-    print("Features after thresholding:", len(retained_features))
-    print("Retained features:", list(retained_features))
-
-# Convert back to DataFrames
-X_train = pd.DataFrame(X_train_transformed,
-                      columns=retained_features,
-                      index=X_train.index)
-
-X_test = pd.DataFrame(X_test_transformed,
-                     columns=retained_features,
-                     index=X_test.index)
-
-if show_detail:
-    print("Feature count after thresholding:", len(X_train.columns))
-    print("Retained features:", list(X_train.columns))
 
 ### VARIANCE INFLATION FACTOR ANALYSIS #################################################################################
 # Note: currently nothing further is done with these results. The values are very high and across the entire dataset which is a problem for linear regression models: could be bypassed by omitting linear regression models (logistic regression)
@@ -157,6 +128,19 @@ if show_detail:
     #  Check matrix rank
     matrix_rank = np.linalg.matrix_rank(X_train)
     print(f"\nMatrix rank: {matrix_rank}/{X_train.shape[1]} features are linearly independent")
+
+### CONVERT INTEGER COLUMNS TO FLOAT ###################################################################################
+  # Safely handles missing values
+class IntToFloatTransformer(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        # Only convert if DataFrame (preserves column names)
+        if isinstance(X, pd.DataFrame):
+            int_cols = X.select_dtypes(include=['int', 'int32', 'int64']).columns
+            X[int_cols] = X[int_cols].astype(float)
+        return X
 
 ### DEFINE FEATURE SELECTION PER MODEL #################################################################################
 # Whether to do feature selection or not - applies to all steps (basic training, hyperparameter exploration, and final model training
@@ -195,9 +179,9 @@ feature_selectors = {
                      'SFM_RF': SelectFromModel(estimator=RandomForestClassifier(n_estimators=100, max_depth=5,random_state=42), threshold="median"), # todo added params to replicate prior results - should experiment with all options
                      # 'SFM_XGB': SelectFromModel(estimator=XGBClassifier()),
                      # 'SFM_LAS': SelectFromModel(estimator=Lasso()),
-                     # 'SFS_LR': SequentialFeatureSelector(estimator=LogisticRegression(), n_features_to_select=270, direction="forward"),
-                     # 'SFS_LSVC': SequentialFeatureSelector(estimator=LinearSVC(), n_features_to_select=270, direction="forward"),
-                     # 'SFS_XGB': SequentialFeatureSelector(estimator=XGBClassifier(), n_features_to_select=270, direction="forward"),
+                     # 'SFS_LR': SequentialFeatureSelector(estimator=LogisticRegression(), n_features_to_select=max(1, int((X_train.shape[1]) * 0.5)), direction="forward"), #IMPROVE: Could do hyperparameter tuning on the FS including n_features
+                     # 'SFS_LSVC': SequentialFeatureSelector(estimator=LinearSVC(), n_features_to_select=max(1, int((X_train.shape[1]) * 0.5)), direction="forward"),
+                     # 'SFS_XGB': SequentialFeatureSelector(estimator=XGBClassifier(), n_features_to_select=max(1, int((X_train.shape[1]) * 0.5)), direction="forward"),
                      # 'BORUTA': BorutaPy(estimator=RandomForestClassifier(), n_estimators='auto', max_iter=10),
                      # 'NONE': 'passthrough'
                      }
@@ -234,9 +218,14 @@ def basic_train(model, X_train, y_train, identifier, scores_dict):
     # Iterate over feature selectors
     model_results = {}
     for fs_name, selector in feature_selectors.items():
-        # Create a pipeline with feature selection and classifier - ensures same CV folds/feature selection
+        # Create a pipeline with a) the required preprocessing steps and b) the FS and model. This is then applied to each CV fold to avoid data leakage vs applying to all of X_train
         pipe = Pipeline([
-            ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
+            ('preprocessor', Pipeline([
+                ('int_to_float', IntToFloatTransformer()),
+                ('var_thresh', VarianceThreshold(threshold=threshold)),
+                ('scaler', StandardScaler())
+            ])),
+            ('feature_selector', selector if feature_selection else 'passthrough'),
             ('classifier', model)
         ])
         try:
@@ -259,7 +248,7 @@ def basic_train(model, X_train, y_train, identifier, scores_dict):
     # Print results from best feature selection methods
     model_results_df = pd.DataFrame.from_dict(model_results,
                            orient='index',
-                           columns=['Model', 'Selector', 'Train Accuracy', 'Test Accuracy', 'Train F1',
+                           columns=['Model', 'Selector', 'Train Accuracy', 'CV Accuracy', 'Train F1',
                                     'Test F1']).sort_values(by=['Test F1'], ascending=False)
     print(f"Metrics from {identifier} experimentation:")
     print(model_results_df, "\n")
@@ -333,7 +322,7 @@ if basic_training:
     # Make dataframe of model scores and print results
     scores = pd.DataFrame.from_dict(top_model_scores,
                                     orient='index',
-                                    columns=['Model', 'Selector', 'Train Accuracy', 'Test Accuracy', 'Train F1',
+                                    columns=['Model', 'Selector', 'Train Accuracy', 'CV Accuracy', 'Train F1',
                                              'Test F1']).reset_index(drop=True).sort_values(by='Test F1', ascending=False)
     # Print the top results for each model
     print("\nBest results per model:")
@@ -365,7 +354,7 @@ else:
 # For selected models, define a parameter params['type'] for the model name. Then evaluate parameters and calculate the cross-validated accuracy.
 
 # Dictionary to store the best model accuracies
-best_accuracies = {
+best_f1 = {
     'svm': 0.0,
     'rf': 0.0,
     'logreg': 0.0,
@@ -426,20 +415,31 @@ def objective(params):
 
     # Incorporate feature selection into the pipeline
     pipe = Pipeline([
+        ('int_to_float', IntToFloatTransformer()),
+        ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
+        ('classifier', clf)
+    ])
+    # Incorporate required preprocessing/FS steps and the model
+    pipe = Pipeline([
+        ('preprocessor', Pipeline([
+            ('int_to_float', IntToFloatTransformer()),
+            ('var_thresh', VarianceThreshold(threshold=threshold)),
+            ('scaler', StandardScaler())
+        ])),
         ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
         ('classifier', clf)
     ])
 
-    # Use 10-fold cross validation to compute the mean accuracy
-    accuracy = cross_val_score(pipe, X_train, y_train, cv=StratifiedKFold(5, shuffle=True, random_state=42), scoring='f1').mean()  # Reduced to 5-fold for speed
+    # Use 10-fold cross validation to compute the mean accuracy #todo make to f1 score
+    f1_score_mean = cross_val_score(pipe, X_train, y_train, cv=StratifiedKFold(5, shuffle=True, random_state=42), scoring='f1').mean()  # Reduced to 5-fold for speed
 
     # Log the best accuracy for each model type if improved
-    if accuracy > best_accuracies[classifier_type]:
-        best_accuracies[classifier_type] = accuracy
-        mlflow.log_metric(f"best_{classifier_type}_accuracy", accuracy)
+    if f1_score_mean > best_f1[classifier_type]:
+        best_f1[classifier_type] = f1_score_mean
+        mlflow.log_metric(f"best_{classifier_type}_F1", f1_score_mean)
 
     # Because fmin() tries to minimize the objective, this function must return the negative accuracy.
-    return {'loss': -accuracy, 'status': STATUS_OK}
+    return {'loss': -f1_score_mean, 'status': STATUS_OK}
 
 ### DEFINE SEARCH SPACES PER MODEL #####################################################################################
   # Define each search space per model type. If in the top performing models (determined in basic train/manually), add to the overall search space
@@ -461,7 +461,7 @@ if type_translation['rf'] in best_models_fs:
     best_spaces.append({
         'type': 'rf',
         'criterion': hp.choice('rf_criterion', ['gini', 'entropy', 'log_loss']),
-        'n_estimators': hp.quniform('rf_n_estimators', 50, 500, 50),
+        'n_estimators': hp.quniform('rf_n_estimators', 50, 500, 25),
         'max_depth': hp.quniform('rf_max_depth', 2, 10, 1),
         'min_samples_split': hp.quniform('rf_min_samples_split', 2, 20, 1),
         'min_samples_leaf': hp.quniform('rf_min_samples_leaf', 1, 10, 1),
@@ -501,7 +501,7 @@ if type_translation['xgb'] in best_models_fs:
 if type_translation['gb'] in best_models_fs:
     best_spaces.append({
         'type': 'gb',
-        'n_estimators': hp.quniform('gb_n_estimators', 50, 250, 50),
+        'n_estimators': hp.quniform('gb_n_estimators', 50, 250, 25),
         'max_depth': hp.quniform('gb_max_depth', 3, 15, 1),
         'min_samples_split': hp.quniform('gb_min_samples_split', 2, 20, 1),
         'min_samples_leaf': hp.quniform('gb_min_samples_leaf', 1, 10, 1),
@@ -548,14 +548,14 @@ with mlflow.start_run():
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=50, #todo: increase on a better machine
+        max_evals=10, #todo: increase on a better machine
         trials=Trials()
     )
 
 # Print the best accuracies for each model type
 print("\nHighest model accuracies on train data:")
-best_accuracy_df = pd.DataFrame(list(best_accuracies.items()), columns=['Models', 'Highest accuracy'])
-print(best_accuracy_df)
+best_f1_df = pd.DataFrame(list(best_f1.items()), columns=['Models', 'Highest F1'])
+print(best_f1_df)
 
 # Extract and print the best hyperparameter configuration
 best_config = space_eval(search_space, best_result)
@@ -605,14 +605,28 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
         best_params['leaf_size'] = int(best_params['leaf_size'])
         classifier = KNeighborsClassifier(**best_params)
 
-    # Create the final pipeline with feature selection and classifier # TODO not sure if i need pipeline here since I dont feed into cross_val_score?
+    # Create the final pipeline with feature selection and classifier
     final_pipeline = Pipeline([
-        ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
+        ('preprocessor', Pipeline([
+            ('int_to_float', IntToFloatTransformer()),
+            ('var_thresh', VarianceThreshold(threshold=0.0)),
+            ('scaler', StandardScaler())
+        ])),
+        ('feature_selector', selector if feature_selection else 'passthrough'),
         ('classifier', classifier)
     ])
 
     # Train on full training data
     final_pipeline.fit(X_train, y_train)
+
+    if show_detail: # WARNING untested
+        # Track retained features post-preprocessing
+        preprocessor = final_pipeline.named_steps['preprocessor']
+        var_thresh = preprocessor.named_steps['var_thresh']
+        retained_mask = var_thresh.get_support()
+        retained_features = X_train.columns[retained_mask]
+        print("Features after thresholding:", retained_features.tolist())
+
 # WARNING: From here needs testing/improvement
     # Print the selected features
     try: # TODO this was made when RFECV was used for all, so likely no longer works
@@ -626,6 +640,7 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
     ### Log the final pipeline model
     # Create input example
     input_example = X_train.iloc[:1]
+
     # Infer model signature
     signature = infer_signature(X_train, final_pipeline.predict(X_train))
     mlflow.sklearn.log_model(final_pipeline, "best_model", signature=signature, input_example=input_example)
@@ -640,8 +655,8 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
     test_f1 = f1_score(y_test, y_pred)
 
     # Log metrics #TODO commented out as I think these are redundant due to autolog
-    # mlflow.log_metric("test_accuracy", test_accuracy)
-    # mlflow.log_metric("test_f1", test_f1)
+    mlflow.log_metric("test_accuracy", test_accuracy)
+    mlflow.log_metric("test_f1", test_f1)
 
     cm = confusion_matrix(y_test, y_pred)
     print("Confusion Matrix:\n", cm)
@@ -821,9 +836,12 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
 
         # Calculate permutation importance
         perm_importance = permutation_importance(
-            final_pipeline, X_test, y_test,
+            final_pipeline,
+            X_test,
+            y_test,
             n_repeats=30,
-            random_state=42
+            random_state=42,
+            scoring='f1',
         )
 
         # Get the selected feature names
