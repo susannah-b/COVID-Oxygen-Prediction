@@ -27,12 +27,10 @@ from mlflow.models.signature import infer_signature
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.base import BaseEstimator, TransformerMixin
 import warnings
-
 # todo clean up at end
 
 # TODO Any other useful metrics to generate? Or adjust what I assess by
 
-# todo do i need to do anything with balancing classes?
 
 # WARNING - suppress MLflow warning and precision warning - fix later
 from mlflow.exceptions import MlflowException
@@ -146,45 +144,123 @@ class IntToFloatTransformer(BaseEstimator, TransformerMixin):
 # Whether to do feature selection or not - applies to all steps (basic training, hyperparameter exploration, and final model training
 feature_selection = True
 
-# Dictionary of feature selectors to use in basic model training # TODO maybe you could have a params variable if you wanted to specify more. and another dict for param search space
-#    Feature selection methods taken from scikit-learn documentation # IMPROVE - methods were chosen to cover a wide range of approaches/models but could be tweaked further
-# todo: have collapsed code below for ease of use and put a simplied FS dict in for now: but need to expand all and fully test FS
-feature_selectors = {
-                     # 'RFECV_LR': RFECV(estimator=LogisticRegression(),
-                     #                step=1,
-                     #                cv=StratifiedKFold(5),
-                     #                scoring="accuracy",
-                     #                min_features_to_select=1,
-                     #                n_jobs=2),
-                     # 'RFECV_SVC': RFECV(estimator=SVC(),
-                     #                step=1,
-                     #                cv=StratifiedKFold(5),
-                     #                scoring="accuracy",
-                     #                min_features_to_select=1,
-                     #                n_jobs=2),
-                     # 'RFECV_RF': RFECV(estimator=RandomForestClassifier(),
-                     #                step=1,
-                     #                cv=StratifiedKFold(5),
-                     #                scoring="accuracy",
-                     #                min_features_to_select=1,
-                     #                n_jobs=2),
-                     # 'RFECV_XGB': RFECV(estimator=XGBClassifier(),
-                     #                step=1,
-                     #                cv=StratifiedKFold(5),
-                     #                scoring="accuracy",
-                     #                min_features_to_select=1,
-                     #                n_jobs=2),
-                     # 'SFM_LR': SelectFromModel(estimator=LogisticRegression(solver='saga', tol=1e-3, max_iter=200)),
-                     # 'SFM_SVC': SelectFromModel(estimator=SVC()),
-                     'SFM_RF': SelectFromModel(estimator=RandomForestClassifier(n_estimators=100, max_depth=5,random_state=42), threshold="median"), # todo added params to replicate prior results - should experiment with all options
-                     # 'SFM_XGB': SelectFromModel(estimator=XGBClassifier()),
-                     # 'SFM_LAS': SelectFromModel(estimator=Lasso()),
-                     # 'SFS_LR': SequentialFeatureSelector(estimator=LogisticRegression(), n_features_to_select=max(1, int((X_train.shape[1]) * 0.5)), direction="forward"), #IMPROVE: Could do hyperparameter tuning on the FS including n_features
-                     # 'SFS_LSVC': SequentialFeatureSelector(estimator=LinearSVC(), n_features_to_select=max(1, int((X_train.shape[1]) * 0.5)), direction="forward"),
-                     # 'SFS_XGB': SequentialFeatureSelector(estimator=XGBClassifier(), n_features_to_select=max(1, int((X_train.shape[1]) * 0.5)), direction="forward"),
-                     # 'BORUTA': BorutaPy(estimator=RandomForestClassifier(), n_estimators='auto', max_iter=10),
-                     # 'NONE': 'passthrough'
-                     }
+### Feature selection methods taken from scikit-learn documentation # IMPROVE - methods were chosen to cover a wide range of approaches/models but could be tweaked further
+# Dictionary of feature selector options. base_params are fixed parameters that also apply to basic_train, with other parameters tunable later in the search space #IMPROVE Go over docu and check parameter options
+feature_selectors = { #TODO need to test and uncomment all methods - and look up sklearn docu to refine base/search space params and options
+    # # RFECV with Logistic Regression
+    # 'RFECV_LR': {
+    #     'class': RFECV,
+    #     'base_params': {
+    #         'estimator': LogisticRegression(),
+    #         'step': 1,
+    #         'cv': StratifiedKFold(5),
+    #         'scoring': "f1",
+    #         'min_features_to_select': 1,
+    #         'n_jobs': 2
+    #     }
+    # },
+    # # RFECV with Support Vector Classifier
+    # 'RFECV_SVC': {
+    #     'class': RFECV,
+    #     'base_params': {
+    #         'estimator': SVC(),
+    #         'step': 1,
+    #         'cv': StratifiedKFold(5),
+    #         'scoring': "f1",
+    #         'min_features_to_select': 1,
+    #         'n_jobs': 2
+    #     }
+    # },
+    # # RFECV with Random Forest
+    # 'RFECV_RF': {
+    #     'class': RFECV,
+    #     'base_params': {
+    #         'estimator': RandomForestClassifier(),
+    #         'step': 1,
+    #         'cv': StratifiedKFold(5),
+    #         'scoring': "f1",
+    #         'min_features_to_select': 1,
+    #         'n_jobs': 2
+    #     }
+    # },
+    # # RFECV with XGBoost
+    # 'RFECV_XGB': {
+    #     'class': RFECV,
+    #     'base_params': {
+    #         'estimator': XGBClassifier(),
+    #         'step': 1,
+    #         'cv': StratifiedKFold(5),
+    #         'scoring': "f1",
+    #         'min_features_to_select': 1,
+    #         'n_jobs': 2
+    #     }
+    # },
+    # # SelectFromModel with Logistic Regression
+    # 'SFM_LR': {
+    #     'class': SelectFromModel,
+    #     'base_params': {
+    #         'estimator': LogisticRegression(solver='saga', tol=1e-3, max_iter=200)
+    #     }
+    # },
+    # # SelectFromModel with Support Vector Classifier
+    # 'SFM_SVC': {
+    #     'class': SelectFromModel,
+    #     'base_params': {
+    #         'estimator': SVC()
+    #     }
+    # },
+    # SelectFromModel with Random Forest
+    'SFM_RF': {
+        'class': SelectFromModel,
+        'base_params': {
+            'estimator': RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42),
+            'threshold': "median"
+        }
+    },
+    # # SelectFromModel with XGBoost
+    # 'SFM_XGB': {
+    #     'class': SelectFromModel,
+    #     'base_params': {
+    #         'estimator': XGBClassifier()
+    #     }
+    # },
+    # # SelectFromModel with Lasso
+    # 'SFM_LAS': {
+    #     'class': SelectFromModel,
+    #     'base_params': {
+    #         'estimator': Lasso()
+    #     }
+    # },
+    # # Sequential Feature Selection with Logistic Regression
+    # 'SFS_LR': {
+    #     'class': SequentialFeatureSelector,
+    #     'base_params': {
+    #         'estimator': LogisticRegression(),
+    #         'n_features_to_select': 'auto',
+    # }
+    # },
+    # # Sequential Feature Selection with Linear SVC
+    # 'SFS_LSVC': {
+    #     'class': SequentialFeatureSelector,
+    #     'base_params': {
+    #         'estimator': LinearSVC(),
+    #         'n_features_to_select': 'auto',
+    # }
+    # },
+    # # Sequential Feature Selection with XGBoost
+    # 'SFS_XGB': {
+    #     'class': SequentialFeatureSelector,
+    #     'base_params': {
+    #         'estimator': XGBClassifier(),
+    #         'n_features_to_select': 'auto',
+    # }
+    # },
+    # # No feature selection
+    # 'NONE': {
+    #     'class': None,
+    #     'base_params': {}
+    # }
+    }
 
 # feature_selectors_dict = { # WARNING delete
 #     'svm': SelectFromModel(LinearSVC(C=0.1, random_state=42, max_iter=2000)),
@@ -208,7 +284,7 @@ feature_selectors = {
 
 ### ESTIMATE BEST MODELS WITH BASIC SETTINGS ###########################################################################
 # Bool to decide whether to go through the training of basic models to determine the most promising candidates/feature selectors
-basic_training = False
+basic_training = True
 
 # Initialise dict to store best results per model
 top_model_scores = {}
@@ -217,7 +293,14 @@ top_model_scores = {}
 def basic_train(model, X_train, y_train, identifier, scores_dict):
     # Iterate over feature selectors
     model_results = {}
-    for fs_name, selector in feature_selectors.items():
+    for fs_name, selector_config in feature_selectors.items():
+        # Build selector from configuration
+        if fs_name == 'NONE':
+            selector = 'passthrough'
+        else:
+            # Instantiate selector with base parameters
+            selector = selector_config['class'](**selector_config['base_params'])
+
         # Create a pipeline with a) the required preprocessing steps and b) the FS and model. This is then applied to each CV fold to avoid data leakage vs applying to all of X_train
         pipe = Pipeline([
             ('preprocessor', Pipeline([
@@ -376,12 +459,27 @@ type_translation = { # IMPROVE could just use the full name for simplicity and r
 
 # Objective function; which parameter configuation is used
 def objective(params):
+    # Get classifier type for each search space
     classifier_type = params['type']
     del params['type']
-    # Set feature selector based on classifier type
-    selector = feature_selectors[best_models_fs[type_translation[classifier_type]]]
 
-    # Build the classifier based on provided type and convert parameters that must be integers (hyperopt returns floats) if necessary
+    # Set feature selector and parameters based on classifier type (as defined by basic_train)
+    fs_params = params.pop('fs_params', {}) # Remove FS params from classifier search space
+
+    # Get selector configuration
+    selector_type = best_models_fs[type_translation[classifier_type]]
+    selector_config = feature_selectors[selector_type]
+
+    ### Build the feature selector
+    if selector_type == 'NONE':
+        selector = 'passthrough'
+    else:
+        # Merge base parameters with tuned parameters
+        all_params = {**selector_config['base_params'], **fs_params}
+        selector = selector_config['class'](**all_params)
+        print(f"Now tuning: {classifier_type} with {selector_type}") #IMPROVE maybe delete this after testing - otherwise it's one print per eval
+
+    ### Build the classifier based on provided type and convert parameters that must be integers (hyperopt returns floats) if necessary
     if classifier_type == 'svm':
         clf = SVC(**params)
     elif classifier_type == 'rf':
@@ -430,7 +528,7 @@ def objective(params):
         ('classifier', clf)
     ])
 
-    # Use 10-fold cross validation to compute the mean accuracy #todo make to f1 score
+    # Use 10-fold cross validation to compute the mean accuracy
     f1_score_mean = cross_val_score(pipe, X_train, y_train, cv=StratifiedKFold(5, shuffle=True, random_state=42), scoring='f1').mean()  # Reduced to 5-fold for speed
 
     # Log the best accuracy for each model type if improved
@@ -440,6 +538,51 @@ def objective(params):
 
     # Because fmin() tries to minimize the objective, this function must return the negative accuracy.
     return {'loss': -f1_score_mean, 'status': STATUS_OK}
+
+### DEFINE SEARCH SPACES PER FEATURE SELECTOR ########################################################################## # TODO - go over documentation and check which options to include for each parameter, and decide whether to go in base params or the search space - AI-gened for now
+selector_param_spaces = { # Note: for new data, values may need to be tweaked as in feature selection parameter tuning, some fits can fail and crash the script
+    'SFM_RF': {
+        'threshold': hp.choice('sfm_rf_threshold', [None, 'median', 'mean'])
+    },
+    'RFECV_SVC': {
+        'step': hp.uniform('rfecv_step', 0.01, 0.3),
+        'min_features_to_select': hp.quniform('rfecv_min_feat', 5, 30, 1)
+    },
+    'SFM_XGB': {
+        'max_features': hp.uniform('xgb_max_feat', 0.1, 1.0),
+        'threshold': hp.choice('xgb_threshold', ['median', 0.5, 1.0])
+    },
+    'RFECV_LR': {
+        'step': hp.uniform('rfecv_lr_step', 0.01, 0.3),
+        'min_features_to_select': hp.quniform('rfecv_lr_min_feat', 5, 30, 1)
+    },
+    'RFECV_RF': {
+        'step': hp.uniform('rfecv_rf_step', 0.01, 0.3),
+        'min_features_to_select': hp.quniform('rfecv_rf_min_feat', 5, 30, 1)
+    },
+    'RFECV_XGB': {
+        'step': hp.uniform('rfecv_xgb_step', 0.01, 0.3),
+        'min_features_to_select': hp.quniform('rfecv_xgb_min_feat', 5, 30, 1)
+    },
+    'SFM_LR': {
+        'threshold': hp.choice('sfm_lr_threshold', [None, 'median', 'mean', 0.1, 0.5, 1.0])
+    },
+    'SFM_SVC': {
+        'threshold': hp.choice('sfm_svc_threshold', [None, 'median', 'mean', 0.1, 0.5, 1.0])
+    },
+    'SFM_LAS': {
+        'threshold': hp.choice('sfm_las_threshold', [None, 'median', 'mean', 0.1, 0.5, 1.0])
+    },
+    'SFS_LR': {
+        'n_features_to_select': hp.quniform('sfs_lr_n_features', 5, min(50, X_train.shape[1]), 1)
+    },
+    'SFS_LSVC': {
+        'n_features_to_select': hp.quniform('sfs_lsvc_n_features', 5, min(50, X_train.shape[1]), 1)
+    },
+    'SFS_XGB': {
+        'n_features_to_select': hp.quniform('sfs_xgb_n_features', 5, min(50, X_train.shape[1]), 1)
+    },
+}
 
 ### DEFINE SEARCH SPACES PER MODEL #####################################################################################
   # Define each search space per model type. If in the top performing models (determined in basic train/manually), add to the overall search space
@@ -468,6 +611,7 @@ if type_translation['rf'] in best_models_fs:
         'max_features': hp.choice('rf_max_features', ['sqrt', 'log2', 0.8]),
         'class_weight': hp.choice('rf_class_weight', [None, 'balanced']),
         'random_state': 42,
+        'fs_params': selector_param_spaces[best_models_fs[type_translation['rf']]] # The FS shorthand name, e.g. SFM_RF
     })
 # Logistic regression
 if type_translation['logreg'] in best_models_fs:
@@ -568,9 +712,22 @@ print(best_config_df)
 mlflow.sklearn.autolog()
 with mlflow.start_run():  # TODO need to find examples of this being done - unsure on the final training/testing after hyperopt tuning
     classifier_type = best_config['type'] # Extract best classifier type
-    best_params = {k: v for k, v in best_config.items() if k != 'type'} #Extract best hyperparameters
-    # Set feature selector based on classifier type
-    selector = feature_selectors[best_models_fs[type_translation[classifier_type]]]
+
+    # Get parameters for the classifier and feature selector
+    fs_params = best_config.get('fs_params', {})  # Feature selector params
+    best_params = {k: v for k, v in best_config.items() if k not in ['type', 'fs_params']}
+
+    # Get selector configuration
+    selector_type = best_models_fs[type_translation[classifier_type]]
+    selector_config = feature_selectors[selector_type]
+
+    # Build selector
+    if selector_type == 'NONE':
+        selector = 'passthrough'
+    else:
+        all_params = {**selector_config['base_params'], **fs_params}
+        selector = selector_config['class'](**all_params)
+
 
     # Log the best hyperparameters
     mlflow.log_params(best_config)
