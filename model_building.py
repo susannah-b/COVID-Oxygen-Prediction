@@ -24,6 +24,7 @@ import seaborn as sns
 from sklearn.metrics import roc_curve, auc, RocCurveDisplay
 from mlflow.models.signature import infer_signature
 from statsmodels.stats.outliers_influence import variance_inflation_factor
+from imblearn.over_sampling import SMOTE
 # todo clean up at end
 
 # TODO Any other useful metrics to generate? Or adjust what I assess by
@@ -52,10 +53,8 @@ y_test = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
 # Set pandas to display all columns
 pd.set_option('display.max_columns', None)
 
-# TODO Saw a mention of VIF analysis, do I use that in conjunction with thresholding? Currently only do 0 variance thresholding though
-
 ### OPTIONAL: DROP METADATA ############################################################################################ #TODO once the model is finished and can run on HPC, run with and without dropping to comapre results
-drop_metadata = True # To experiment with excluding metadata from the model, enable this option
+drop_metadata = False # To experiment with excluding metadata from the model, enable this option
 
 # Read in the original metadata file to read the column info
 s_meta_file = Path(__file__).parent / "Surrey_Files" / "Surrey_Metadata_master_spreadsheet_130622_edit2.csv"
@@ -99,7 +98,7 @@ if show_detail:
 variances = X_train.var(axis=0)
 #threshold = np.median(variances) # Example of thresholds - either delete or experiment with
 #threshold = np.quantile(variances, 0.75)
-threshold = 0.0
+threshold = 1e-10 # Effectively zero but avoids floating-point issues
 
 # Creating a preprocessing pipeline to scale and feature select through variance thresholding
 preprocessor = Pipeline([
@@ -163,9 +162,7 @@ if show_detail:
 # Whether to do feature selection or not - applies to all steps (basic training, hyperparameter exploration, and final model training
 feature_selection = True
 
-# Define a dictionary mapping classifier types to their optimal feature selectors
-
-# Dictionary of feature selectors to use in basic model training #TODO maybe you could have a params variable if you wanted to specify more. and another dict for param search space
+# Dictionary of feature selectors to use in basic model training # TODO maybe you could have a params variable if you wanted to specify more. and another dict for param search space
 #    Feature selection methods taken from scikit-learn documentation # IMPROVE - methods were chosen to cover a wide range of approaches/models but could be tweaked further
 # todo: have collapsed code below for ease of use and put a simplied FS dict in for now: but need to expand all and fully test FS
 feature_selectors = {
@@ -227,7 +224,7 @@ feature_selectors = {
 
 ### ESTIMATE BEST MODELS WITH BASIC SETTINGS ###########################################################################
 # Bool to decide whether to go through the training of basic models to determine the most promising candidates/feature selectors
-basic_training = False #TODO: Currently disabled and top model number set to 1 to just test the script with the RF model only for speed
+basic_training = False
 
 # Initialise dict to store best results per model
 top_model_scores = {}
@@ -253,7 +250,8 @@ def basic_train(model, X_train, y_train, identifier, scores_dict):
             f1_train = f1_score(y_train, y_pred)
             accuracy_train = accuracy_score(y_train, y_pred)
 
-            model_results[fs_name] = [identifier, fs_name, f1_train, f1_val.mean(), accuracy_train, accuracy_val.mean()]
+            #model_results[fs_name] = [identifier, fs_name, f1_train, f1_val.mean(), accuracy_train, accuracy_val.mean()]
+            model_results[fs_name] = [identifier, fs_name, accuracy_train, accuracy_val.mean(), f1_train, f1_val.mean(), ]
             print(f"Training of {identifier} using {fs_name} complete.")
         except Exception as e:
             print(f"Error training {identifier} with {fs_name}: {str(e)}")
@@ -261,8 +259,8 @@ def basic_train(model, X_train, y_train, identifier, scores_dict):
     # Print results from best feature selection methods
     model_results_df = pd.DataFrame.from_dict(model_results,
                            orient='index',
-                           columns=['Model', 'Selector', 'Train F1', 'Test F1', 'Train Accuracy',
-                                    'Test Accuracy']).sort_values(by=['Test Accuracy'], ascending=False)
+                           columns=['Model', 'Selector', 'Train Accuracy', 'Test Accuracy', 'Train F1',
+                                    'Test F1']).sort_values(by=['Test F1'], ascending=False)
     print(f"Metrics from {identifier} experimentation:")
     print(model_results_df, "\n")
     # Take the top result unless empty
@@ -274,16 +272,16 @@ def basic_train(model, X_train, y_train, identifier, scores_dict):
     print(f"Finished training {identifier}")
 
 # Determine which models to test
-Logistic_regression = True
+Logistic_regression = False
 SVM = False
-Random_forest = False
+Random_forest = True
 AdaBoost = False
 Gradient_boosting = False
 XGBoost = False
 KNN = False
 
 #  WARNING version with all switched on - delete after testing:
-# logistic_regression = True
+# Logistic_regression = True
 # SVM = True
 # Random_forest = True
 # AdaBoost = True
@@ -335,15 +333,15 @@ if basic_training:
     # Make dataframe of model scores and print results
     scores = pd.DataFrame.from_dict(top_model_scores,
                                     orient='index',
-                                    columns=['Model', 'Selector', 'Train F1', 'Test F1', 'Train Accuracy',
-                                             'Test Accuracy']).reset_index(drop=True).sort_values(by='Test Accuracy', ascending=False)
+                                    columns=['Model', 'Selector', 'Train Accuracy', 'Test Accuracy', 'Train F1',
+                                             'Test F1']).reset_index(drop=True).sort_values(by='Test F1', ascending=False)
     # Print the top results for each model
     print("\nBest results per model:")
     print(scores.head(len(scores)))
 
     ### Determine the best performing models to take to the tuning phase
     # Initialise objects
-    n_models_to_tune = 1  # The top N models - change this as needed
+    n_models_to_tune = 1  # The top N models - change this as needed #IMPROVE change back after tests - 2 or 3
     # Extract best model and feature selection from top_model_scores
     for i in range(0, n_models_to_tune):
         model = scores.iloc[i, 0]
@@ -363,7 +361,7 @@ else:
 # Example printed result from basic training:
 # TODO paste in example output once feature selection is more pinned down/state which perform the best
 
-### HYPEROPT PARAMETER TUNING ##########################################################################################
+### OBJECTIVE FUNCTION FOR HYPEROPT PARAMETER TUNING ###################################################################
 # For selected models, define a parameter params['type'] for the model name. Then evaluate parameters and calculate the cross-validated accuracy.
 
 # Dictionary to store the best model accuracies
@@ -444,7 +442,7 @@ def objective(params):
     return {'loss': -accuracy, 'status': STATUS_OK}
 
 ### DEFINE SEARCH SPACES PER MODEL #####################################################################################
-  # Define each search space per model type. If in the top performing models (determined in basic train/manually), add to the overall search space #todo split whole code into sections more with headers - done here but need for the rest
+  # Define each search space per model type. If in the top performing models (determined in basic train/manually), add to the overall search space
 
 best_spaces = [] # Initialise list
 ### Define space for each model
@@ -536,13 +534,13 @@ if type_translation['knn'] in best_models_fs:
         'leaf_size': hp.uniform('knn_leaf_size', 10, 60),
         'p': hp.choice('knn_p', [1, 2]),
         'metric': hp.choice('knn_metric', ['minkowski', 'euclidean', 'cityblock']),
-        'random_state': 42,
     })
 
 
 # Define the search space over hyperparameters (for classifier only; feature selection is determined elsehwere)
 search_space = hp.choice('classifier_type', best_spaces)
 
+### HYPEROPT TUNING WITH MLFLOW ########################################################################################
 print("\nNow tuning hyperparameters\n")
 
 with mlflow.start_run():
@@ -641,9 +639,9 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
     test_accuracy = accuracy_score(y_test, y_pred)
     test_f1 = f1_score(y_test, y_pred)
 
-    # Log metrics
-    mlflow.log_metric("test_accuracy", test_accuracy)
-    mlflow.log_metric("test_f1", test_f1)
+    # Log metrics #TODO commented out as I think these are redundant due to autolog
+    # mlflow.log_metric("test_accuracy", test_accuracy)
+    # mlflow.log_metric("test_f1", test_f1)
 
     cm = confusion_matrix(y_test, y_pred)
     print("Confusion Matrix:\n", cm)
@@ -824,7 +822,7 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
         # Calculate permutation importance
         perm_importance = permutation_importance(
             final_pipeline, X_test, y_test,
-            n_repeats=10,
+            n_repeats=30,
             random_state=42
         )
 
