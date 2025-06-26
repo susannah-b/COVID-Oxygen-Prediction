@@ -13,8 +13,8 @@ from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier, Gradien
 from sklearn.metrics import roc_curve, auc, RocCurveDisplay
 from sklearn.svm import SVC, LinearSVC
 from sklearn.preprocessing import StandardScaler
-from sklearn.base import BaseEstimator, TransformerMixin
-from xgboost import XGBClassifier
+from sklearn.base import BaseEstimator, TransformerMixin, clone
+from xgboost import XGBClassifier, to_graphviz
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
 import mlflow
 import mlflow.sklearn
@@ -23,6 +23,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 import warnings
+
+from sklearn.tree import plot_tree, export_text
+from xgboost import plot_tree as xgb_plot_tree
+from sklearn.calibration import calibration_curve, CalibrationDisplay
+from sklearn.metrics import brier_score_loss
 # todo clean up at end
 
 # WARNING - suppress MLflow warning and precision warning - fix later
@@ -339,10 +344,10 @@ def basic_train(model, X_train, y_train, identifier, scores_dict):
 # Determine which models to test
 Logistic_regression = False
 SVM = False
-Random_forest = True
+Random_forest = False
 AdaBoost = False
 Gradient_boosting = False
-XGBoost = False
+XGBoost = True
 KNN = False
 
 #  WARNING version with all switched on - delete after testing:
@@ -701,7 +706,7 @@ print("\nBest model configuration:")
 best_config_df = pd.DataFrame(list(best_config.items()), columns=['Parameters', 'Values'])
 print(best_config_df)
 
-### TRAIN FINAL MODEL ###########################################################################################
+### TRAIN FINAL MODEL ##################################################################################################
 # Train final model using the full training data
 mlflow.sklearn.autolog()
 with mlflow.start_run():
@@ -965,7 +970,7 @@ with mlflow.start_run():
     else:
         # For other models where direct feature importance is not available use permutation importance as an alternative
         print("\nCalculating permutation importance for features as an alternative to feature importance.")
-        try: # WARNING - currently fails - if SVC does perform highly then rectify
+        try: # WARNING - currently fails (for SVC, Ada, KNN) - if any do perform highly then rectify
             # Calculate permutation importance
             perm_importance = permutation_importance(
                 final_pipeline,
@@ -1005,6 +1010,158 @@ with mlflow.start_run():
         except Exception as e:
             print(f"Unable to calculate feature importance.\n{e}")
 
+    ### Plot calibration curve - TODO untested
+    try:
+        # Check if model supports probability estimates
+        if hasattr(final_pipeline, 'predict_proba'):
+            # Get predicted probabilities for the positive class
+            prob_pos = final_pipeline.predict_proba(X_test)[:, 1]
+
+            # Compute calibration curve and Brier score
+            fraction_of_positives, mean_predicted_value = calibration_curve(
+                y_test, prob_pos, n_bins=10, strategy='quantile'
+            )
+            brier_score = brier_score_loss(y_test, prob_pos)
+
+            # Plot calibration curve
+            fig, ax = plt.subplots(figsize=(10, 8))
+            CalibrationDisplay.from_predictions(
+                y_test,
+                prob_pos,
+                n_bins=10,
+                strategy='quantile',
+                ax=ax,
+                name=f"{classifier_type} (Brier: {brier_score:.3f})"
+            )
+            ax.set_title(f"Calibration Curve")
+            ax.set_xlabel("Mean Predicted Probability")
+            ax.set_ylabel("Fraction of Positives")
+            ax.grid(True)
+            plt.savefig("calibration_curve.png", dpi=150, bbox_inches='tight')
+            mlflow.log_artifact("calibration_curve.png")
+            plt.close(fig)
+
+            # Log Brier score
+            mlflow.log_metric("brier_score", brier_score)
+
+        # For models without predict_proba but with decision_function (like SVM)
+        elif hasattr(final_pipeline, 'decision_function'):
+            # Get decision scores and scale to [0,1]
+            decision_scores = final_pipeline.decision_function(X_test)
+            prob_pos = (decision_scores - decision_scores.min()) / (decision_scores.max() - decision_scores.min())
+
+            # Compute calibration curve and Brier score
+            fraction_of_positives, mean_predicted_value = calibration_curve(
+                y_test, prob_pos, n_bins=10, strategy='quantile'
+            )
+            brier_score = brier_score_loss(y_test, prob_pos)
+
+            # Plot calibration curve
+            fig, ax = plt.subplots(figsize=(10, 8))
+            CalibrationDisplay.from_predictions(
+                y_test,
+                prob_pos,
+                n_bins=10,
+                strategy='quantile',
+                ax=ax,
+                name=f"{classifier_type} (scaled scores, Brier: {brier_score:.3f})"
+            )
+            ax.set_title(f"Calibration Curve (Scaled Decision Scores)")
+            ax.set_xlabel("Mean Scaled Decision Score")
+            ax.set_ylabel("Fraction of Positives")
+            ax.grid(True)
+            plt.savefig("calibration_curve.png", dpi=150, bbox_inches='tight')
+            mlflow.log_artifact("calibration_curve.png")
+            plt.close(fig)
+
+            # Log Brier score
+            mlflow.log_metric("brier_score", brier_score)
+            print(f"Calibration curve (scaled scores) and Brier score ({brier_score:.3f}) saved successfully.")
+
+        else:
+            print("Model doesn't support probability estimates or decision scores - skipping calibration curve")
+
+    except Exception as e:
+        print(f"Error generating calibration curve: {str(e)}")
+
+    ### Plot decision tree
+    class_names = np.array(['No_Oxygen_Need', 'Oxygen_Need'])  # Replace with your class names
+
+    ### Plot decision tree for tree-based models #TODO: Basic version - when a final best model is obtained this graph can be fine tuned if useful for the final report
+    if classifier_type in ['rf', 'gb', 'xgb']: #TODO untested for xgb and gb
+        try:
+            # Extract classifier from pipeline
+            clf = final_pipeline.named_steps['classifier']
+
+            # Get feature names after feature selection
+            selector = final_pipeline.named_steps['feature_selector']
+            if selector != 'passthrough':
+                if hasattr(selector, 'get_support'):
+                    mask = selector.get_support()
+                    feature_names = X_train.columns[mask]
+                elif hasattr(selector, 'support_'):
+                    feature_names = X_train.columns[selector.support_]
+            else:
+                feature_names = X_train.columns
+
+            # Extract decision tree according to each model type
+            if classifier_type == 'rf':
+                estimator = clf.estimators_[0]
+                plt.figure(figsize=(25, 15))
+                plot_tree(estimator,
+                          feature_names=feature_names,
+                          class_names=class_names,
+                          filled=True,
+                          rounded=True,
+                          max_depth=4) # Limit depth for readability - but ideally expand this for the final graph
+                plt.title("Random Forest - First Tree")
+                plt.savefig("decision_tree_1.png", dpi=200, bbox_inches='tight')
+                mlflow.log_artifact("decision_tree_1.png")
+                plt.close()
+
+                # Also export text representation
+                tree_rules = export_text(estimator,
+                                         feature_names=list(feature_names),
+                                         max_depth=4)
+                with open("tree_rules_1.txt", "w") as f:
+                    f.write(tree_rules)
+                mlflow.log_artifact("tree_rules_1.txt")
+
+            elif classifier_type == 'gb':  # Gradient Boosting
+                estimator = clf.estimators_[0, 0]
+                plt.figure(figsize=(25, 15))
+                plot_tree(estimator,
+                          feature_names=feature_names,
+                          class_names=class_names,
+                          filled=True,
+                          rounded=True,
+                          max_depth=4)
+                plt.title("Gradient Boosting - First Tree")
+                plt.savefig("decision_tree_1.png", dpi=200, bbox_inches='tight')
+                mlflow.log_artifact("decision_tree_1.png")
+                plt.close()
+
+            elif classifier_type == 'xgb':  # XGBoost
+                plt.figure(figsize=(25, 15))
+                xgb_plot_tree(clf, num_trees=0, rankdir='LR')
+                plt.title("XGBoost - First Tree")
+                plt.savefig("decision_tree_1.png", dpi=200, bbox_inches='tight')
+                mlflow.log_artifact("decision_tree_1.png")
+                plt.close()
+
+                # Export JSON representation
+                clf.save_model("xgb_tree.json")
+                mlflow.log_artifact("xgb_tree.json")
+
+                # Save interactive version # TODO install graphviz
+                # to_graphviz(clf, with_stats=True)
+
+            else:
+                print(f"Decision tree plotting not supported for {classifier_type}")
+
+        except Exception as e:
+            print(f"Error plotting decision tree: {str(e)}")
+
 # Example output:
 # Test accuracy with best model (rf): 0.6000
 # Test F1 score with best model (rf): 0.6957
@@ -1013,3 +1170,4 @@ with mlflow.start_run():
 # IMPROVE: Early stopping isn't implemented at all because it would work for some and not others so is more complicated to implement - but could add.
 #  Could also do an ensemble model approach for the final training, and stacking/voting
 
+# IMPROVE once final model is obtained, I'll likely want to plot more model-specific graphs
