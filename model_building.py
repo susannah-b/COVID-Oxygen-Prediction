@@ -1,36 +1,29 @@
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from scipy.datasets import ascent
 from sklearn.inspection import permutation_importance
 from sklearn.pipeline import Pipeline
-from sklearn.feature_selection import RFECV, SelectKBest
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 from sklearn.model_selection import cross_val_score, StratifiedKFold, learning_curve, LearningCurveDisplay
 from sklearn.linear_model import LogisticRegression, Lasso
-from sklearn.feature_selection import SelectFromModel, SequentialFeatureSelector, f_classif, SelectKBest, VarianceThreshold
+from sklearn.feature_selection import SelectFromModel, SequentialFeatureSelector, f_classif, SelectKBest, RFECV, VarianceThreshold
 from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier, GradientBoostingClassifier
-from boruta import BorutaPy
-from sklearn.preprocessing import StandardScaler
-from xgboost import XGBClassifier
+from sklearn.metrics import roc_curve, auc, RocCurveDisplay
 from sklearn.svm import SVC, LinearSVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.base import BaseEstimator, TransformerMixin
+from xgboost import XGBClassifier
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
 import mlflow
 import mlflow.sklearn
-import joblib
+from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import roc_curve, auc, RocCurveDisplay
-from mlflow.models.signature import infer_signature
 from statsmodels.stats.outliers_influence import variance_inflation_factor
-from sklearn.base import BaseEstimator, TransformerMixin
 import warnings
 # todo clean up at end
-
-# TODO Any other useful metrics to generate? Or adjust what I assess by
-
 
 # WARNING - suppress MLflow warning and precision warning - fix later
 from mlflow.exceptions import MlflowException
@@ -60,7 +53,7 @@ y_test = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
 # Set pandas to display all columns
 pd.set_option('display.max_columns', None)
 
-### OPTIONAL: DROP METADATA ############################################################################################ #TODO once the model is finished and can run on HPC, run with and without dropping to comapre results
+### OPTIONAL: DROP METADATA ############################################################################################ #TODO once the model is finished and can run on HPC, run with and without dropping to compare results
 drop_metadata = False # To experiment with excluding metadata from the model, enable this option
 
 # Read in the original metadata file to read the column info
@@ -598,6 +591,7 @@ if type_translation['svm'] in best_models_fs:
         'gamma': hp.choice('svm_gamma', ['scale', 'auto']),
         'class_weight': hp.choice('svm_class_weight', [None, 'balanced']),
         'random_state': 42,
+        'probability' : True
     })
 # Random forest
 if type_translation['rf'] in best_models_fs:
@@ -673,7 +667,7 @@ if type_translation['ada'] in best_models_fs:
 if type_translation['knn'] in best_models_fs:
     best_spaces.append({
         'type': 'knn',
-        'n_neighbors': hp.quniform('knn_n_neighbors', 1, 50, 1),
+        'n_neighbors': hp.quniform('knn_n_neighbors', 1, 11, 1), # For the Surrey data, this had to be limited to a smaller max value
         'weights': hp.choice('knn_weights', ['uniform', 'distance']),
         'leaf_size': hp.uniform('knn_leaf_size', 10, 60),
         'p': hp.choice('knn_p', [1, 2]),
@@ -692,7 +686,7 @@ with mlflow.start_run():
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=10, #todo: increase on a better machine
+        max_evals=3, #todo: increase on a better machine
         trials=Trials()
     )
 
@@ -710,8 +704,9 @@ print(best_config_df)
 ### TRAIN FINAL MODEL ###########################################################################################
 # Train final model using the full training data
 mlflow.sklearn.autolog()
-with mlflow.start_run():  # TODO need to find examples of this being done - unsure on the final training/testing after hyperopt tuning
-    classifier_type = best_config['type'] # Extract best classifier type
+with mlflow.start_run():
+    # Extract best classifier type
+    classifier_type = best_config['type']
 
     # Get parameters for the classifier and feature selector
     fs_params = best_config.get('fs_params', {})  # Feature selector params
@@ -776,52 +771,56 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
     # Train on full training data
     final_pipeline.fit(X_train, y_train)
 
-    if show_detail: # WARNING untested
+    if show_detail:
         # Track retained features post-preprocessing
         preprocessor = final_pipeline.named_steps['preprocessor']
         var_thresh = preprocessor.named_steps['var_thresh']
         retained_mask = var_thresh.get_support()
         retained_features = X_train.columns[retained_mask]
-        print("Features after thresholding:", retained_features.tolist())
+        print("Features after thresholding:", len(retained_features.tolist()))
+        show_features = False # Enable or disable as required
+        if show_features:
+            print(retained_features.tolist())
+        else:
+            print("show_features is disabled in model_building.py. To view features as a list, enable this bool.")
 
-# WARNING: From here needs testing/improvement
-    # Print the selected features
-    try: # TODO this was made when RFECV was used for all, so likely no longer works
-        selected = final_pipeline.named_steps['feature_selector']
-        selected_features = X_train.columns[selected.support_]
+    # Print the selected features post-feature selection method # WARNING Not tested with all methods
+    try:
+        selector = final_pipeline.named_steps['feature_selector']
+        if hasattr(selector, 'get_support'): # Standard scikit-learn selector
+            support_mask = selector.get_support()
+            selected_features = X_train.columns[support_mask].tolist()
+        elif hasattr(selector, 'support_'):# Other selector types
+            selected_features = X_train.columns[selector.support_].tolist()
+        else: # For other selector types, get features via transformation
+            print("Feature selection method is incompatible with current handling to extract features - results are not printed.")
+        # Print features
         print(f"\nSelected {len(selected_features)} features:")
-        print(selected_features.tolist())
-    except:
-        print("Unable to print features - see note in code.")
+        print(selected_features)
+    except Exception as e:
+        print(f"Unable to print features for this feature selection method: {str(e)}")
 
     ### Log the final pipeline model
     # Create input example
     input_example = X_train.iloc[:1]
-
     # Infer model signature
     signature = infer_signature(X_train, final_pipeline.predict(X_train))
     mlflow.sklearn.log_model(final_pipeline, "best_model", signature=signature, input_example=input_example)
-
-    # Save final model #todo not sure what to do with this yet but worth saving - or does mlflow save?
-    joblib.dump(final_pipeline, "Oxygen_Prediction_Model.joblib")
-    mlflow.log_artifact("Oxygen_Prediction_Model.joblib")
 
     # Evaluate the final model on the test set
     y_pred = final_pipeline.predict(X_test)
     test_accuracy = accuracy_score(y_test, y_pred)
     test_f1 = f1_score(y_test, y_pred)
 
-    # Log metrics #TODO commented out as I think these are redundant due to autolog
-    mlflow.log_metric("test_accuracy", test_accuracy)
-    mlflow.log_metric("test_f1", test_f1)
-
+    # Print confusion matrix
     cm = confusion_matrix(y_test, y_pred)
     print("Confusion Matrix:\n", cm)
 
     print(f"\nTest accuracy with best model ({classifier_type}): {test_accuracy:.4f}")
     print(f"Test F1 score with best model ({classifier_type}): {test_f1:.4f}")
 
-    ### Plot learning curve #todo not sure if this (and auc) is in the right place - check over code too
+### GRAPHS #############################################################################################################
+    ### Plot learning curve
     # Compute scores at varying training sizes
     train_sizes, train_scores, val_scores = learning_curve(
         estimator=final_pipeline,
@@ -830,7 +829,6 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
         cv=5,
         train_sizes=[0.1, 0.3, 0.5, 0.7, 1.0]
     )
-
     # Plot the learning curve
     fig, ax = plt.subplots()
     LearningCurveDisplay(
@@ -840,6 +838,9 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
     ).plot(ax=ax)
     ax.set_ylabel("Score")
     ax.set_title("Learning Curve")
+
+    # Save the plot
+    plt.savefig("learning_curve.png", dpi=150, bbox_inches='tight')
 
     # Log the figure as an MLflow artifact
     mlflow.log_figure(fig, "learning_curve.png")
@@ -858,34 +859,19 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
     RocCurveDisplay(fpr=fpr, tpr=tpr, roc_auc=roc_auc).plot(ax=ax)
     ax.set_title(f"ROC Curve (AUC = {roc_auc:.2f})")
     mlflow.log_figure(fig, "roc_curve.png")
+
+    # Save the plot
+    plt.savefig("roc_curve.png", dpi=150, bbox_inches='tight')
     plt.close(fig)
 
     # Log the AUC metric explicitly
     mlflow.log_metric("test_auc", roc_auc)
 
-
-    # Get feature list
-    # Grab the fitted selector step
-    sel = final_pipeline.named_steps['feature_selector']
-
-    # If it’s a scikit‐learn selector (RFECV, SelectKBest, etc.), you can use .get_support() # todo make compatible with all (update: should be all, except boruta)
-    mask = sel.get_support()  # boolean mask of length n_features
-
-    # Apply that mask to the original feature names
-    feature_names = X_train.columns[mask]
-    print(f"{len(feature_names)} features selected:")
-    print(feature_names.tolist())
-
-    ### Plot feature importance #todo test for all
+    ### Plot feature importance
     # Extract feature importances based on the classifier type
     if classifier_type in ['rf', 'xgb', 'gb']:
         # These classifiers have feature_importances_ attribute
         importances = final_pipeline.named_steps['classifier'].feature_importances_
-
-        # Get the selected feature names
-        selector = final_pipeline.named_steps['feature_selector']
-        feature_mask = selector.get_support()
-        selected_features = X_train.columns[feature_mask]
 
         # Create DataFrame for easier plotting with seaborn
         importance_df = pd.DataFrame({
@@ -918,11 +904,6 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
         # For linear SVM, we can extract coefficients
         coefficients = np.abs(final_pipeline.named_steps['classifier'].coef_[0])
 
-        # Get the selected feature names
-        selector = final_pipeline.named_steps['feature_selector']
-        feature_mask = selector.get_support()
-        selected_features = X_train.columns[feature_mask]
-
         # Create DataFrame for plotting
         importance_df = pd.DataFrame({
             'Feature': selected_features,
@@ -954,11 +935,6 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
         # For logistic regression, extract coefficients
         coefficients = np.abs(final_pipeline.named_steps['classifier'].coef_[0])
 
-        # Get the selected feature names
-        selector = final_pipeline.named_steps['feature_selector']
-        feature_mask = selector.get_support()
-        selected_features = X_train.columns[feature_mask]
-
         # Create DataFrame for plotting
         importance_df = pd.DataFrame({
             'Feature': selected_features,
@@ -987,60 +963,52 @@ with mlflow.start_run():  # TODO need to find examples of this being done - unsu
         print(importance_df.head(10))
 
     else:
-        # For other models where direct feature importance is not available
-        # Use permutation importance as an alternative
-        print("\nCalculating permutation importance for features...")
+        # For other models where direct feature importance is not available use permutation importance as an alternative
+        print("\nCalculating permutation importance for features as an alternative to feature importance.")
+        try: # WARNING - currently fails - if SVC does perform highly then rectify
+            # Calculate permutation importance
+            perm_importance = permutation_importance(
+                final_pipeline,
+                X_test,
+                y_test,
+                n_repeats=30,
+                random_state=42,
+                scoring='f1',
+            )
 
-        # Calculate permutation importance
-        perm_importance = permutation_importance(
-            final_pipeline,
-            X_test,
-            y_test,
-            n_repeats=30,
-            random_state=42,
-            scoring='f1',
-        )
+            # Create DataFrame for plotting
+            importance_df = pd.DataFrame({
+                'Feature': selected_features,
+                'Importance': perm_importance.importances_mean
+            }).sort_values('Importance', ascending=False)
 
-        # Get the selected feature names
-        selector = final_pipeline.named_steps['feature_selector']
-        feature_mask = selector.get_support()
-        selected_features = X_train.columns[feature_mask]
+            # Plot with seaborn
+            plt.figure(figsize=(12, 8))
+            sns.set_style("whitegrid")
+            ax = sns.barplot(x='Importance', y='Feature', data=importance_df.head(20), palette='viridis')
+            ax.set_title(f'Top 20 Permutation Feature Importances - {classifier_type.upper()}', fontsize=16)
+            ax.set_xlabel('Mean Importance', fontsize=14)
+            ax.set_ylabel('Feature', fontsize=14)
+            plt.tight_layout()
+            plt.savefig("permutation_importance.png", dpi=300, bbox_inches='tight')
 
-        # Create DataFrame for plotting
-        importance_df = pd.DataFrame({
-            'Feature': selected_features,
-            'Importance': perm_importance.importances_mean
-        }).sort_values('Importance', ascending=False)
+            # Log the figure to MLflow
+            mlflow.log_figure(plt.gcf(), "permutation_importance.png")
+            plt.close()
 
-        # Plot with seaborn
-        plt.figure(figsize=(12, 8))
-        sns.set_style("whitegrid")
-        ax = sns.barplot(x='Importance', y='Feature', data=importance_df.head(20), palette='viridis')
-        ax.set_title(f'Top 20 Permutation Feature Importances - {classifier_type.upper()}', fontsize=16)
-        ax.set_xlabel('Mean Importance', fontsize=14)
-        ax.set_ylabel('Feature', fontsize=14)
-        plt.tight_layout()
-        plt.savefig("permutation_importance.png", dpi=300, bbox_inches='tight') # todo added - but logs below so not sure if redundant
+            # Also save the full feature importance DataFrame as CSV
+            importance_df.to_csv("permutation_importances.csv", index=False)
+            mlflow.log_artifact("permutation_importances.csv")
 
-        # Log the figure to MLflow
-        mlflow.log_figure(plt.gcf(), "permutation_importance.png")
-        plt.close()
-
-        # Also save the full feature importance DataFrame as CSV
-        importance_df.to_csv("permutation_importances.csv", index=False)
-        mlflow.log_artifact("permutation_importances.csv")
-
-        print(f"\nTop 10 most important features (by permutation importance):")
-        print(importance_df.head(10))
-
-
-    ### END OF GRAPHS todo check over
+            print(f"\nTop 10 most important features (by permutation importance):")
+            print(importance_df.head(10))
+        except Exception as e:
+            print(f"Unable to calculate feature importance.\n{e}")
 
 # Example output:
 # Test accuracy with best model (rf): 0.6000
 # Test F1 score with best model (rf): 0.6957
 
-#TODO deleted notes in the code but possibly implement a FS search space
 
 # IMPROVE: Early stopping isn't implemented at all because it would work for some and not others so is more complicated to implement - but could add.
 #  Could also do an ensemble model approach for the final training, and stacking/voting
