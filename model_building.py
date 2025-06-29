@@ -310,22 +310,22 @@ basic_training = True
 top_model_scores = {}
 
 # Determine which models to test
-Logistic_regression = False
-SVM = False
-Random_forest = True
-AdaBoost = False
-Gradient_boosting = False
-XGBoost = True
-KNN = False
-
-#  WARNING version with all switched on - delete after testing:
-# Logistic_regression = True
-# SVM = True
+# Logistic_regression = False
+# SVM = False
 # Random_forest = True
-# AdaBoost = True
-# Gradient_boosting = True
+# AdaBoost = False
+# Gradient_boosting = False
 # XGBoost = True
-# KNN = True
+# KNN = False
+
+#  WARNING version with all switched on - delete other after testing:
+Logistic_regression = True
+SVM = True
+Random_forest = True
+AdaBoost = True
+Gradient_boosting = True
+XGBoost = True
+KNN = True
 
 # Dictionary to store the highest performing models and their feature selection methods
 best_models_fs = {}
@@ -379,7 +379,7 @@ if basic_training:
 
     ### Determine the best performing models to take to the tuning phase
     # Initialise objects
-    n_models_to_tune = 1  # The top N models - change this as needed #IMPROVE change back after tests - 2 or 3
+    n_models_to_tune = 2  # The top N models - change this as needed #IMPROVE change back after tests - 2 or 3
     # Extract best model and feature selection from top_model_scores
     for i in range(0, n_models_to_tune):
         model = scores.iloc[i, 0]
@@ -659,7 +659,7 @@ with mlflow.start_run():
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=3, #todo: increase on a better machine
+        max_evals=500, #todo: increase on a better machine
         trials=Trials()
     )
 
@@ -676,7 +676,7 @@ print(best_config_df)
 
 ### TRAIN FINAL MODEL ##################################################################################################
 # Train final model using the full training data
-mlflow.sklearn.autolog()
+mlflow.sklearn.autolog() # TODO have an option to set a run name
 with mlflow.start_run():
     # Extract the best classifier type
     classifier_type = best_config['type']
@@ -802,7 +802,7 @@ with mlflow.start_run():
         y_full = pd.concat([y_train, y_test]).reset_index(drop=True)
 
         # Standardize the selected data
-        scaler = StandardScaler() # WARNING Avoiding using the same one as in the pipeline to prevent data leakage - not sure if it's an issue but it will error when called later if used here due to different number of features -
+        scaler = StandardScaler() # WARNING Avoiding using the same one as in the pipeline to prevent data leakage - not sure if it's an issue but it will error when called later if used here due to different number of features
         X_scaled = scaler.fit_transform(X_selected)
 
         # Perform PCA
@@ -1281,7 +1281,7 @@ with mlflow.start_run():
         mask_fn = (y_test == 1) & (y_pred == 0)  # False Negative
         mask_tp = (y_test == 1) & (y_pred == 1)  # True Positive
 
-        # Create plot with distinct colors # TODO: COuld switch colours for FN FP if more legible that way
+        # Create plot with distinct colors # TODO: Could switch colours for FN FP if more legible that way
         plt.figure(figsize=(7, 5))
         plt.scatter(pc_df.loc[mask_tn, 'PC1'], pc_df.loc[mask_tn, 'PC2'],
                     c='#088BDD', alpha=0.7, label='True Negative') # Blue = negative (doesn't need O2)

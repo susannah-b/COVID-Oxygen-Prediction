@@ -232,7 +232,6 @@ if impute:
     #
     # # Save feature importance plot #todo haven't looked at these for the test or train data yet as i haven't been able to test generation, maybe remove. same for distributions
     # TODO there is also a get feature importance function that returns a matrix
-    # TODO also complete_data vs MICE function in documentation? what's the difference
     # todo also tune hyperparameters? would that give better prediction
     # todo check miceforest usage examples - see github
     # fig1 = kernel.plot_feature_importance(dataset=0)
