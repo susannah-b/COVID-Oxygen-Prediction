@@ -10,19 +10,23 @@ from sklearn.model_selection import cross_val_score, StratifiedKFold, learning_c
 from sklearn.linear_model import LogisticRegression, Lasso
 from sklearn.feature_selection import SelectFromModel, SequentialFeatureSelector, f_classif, SelectKBest, RFECV, VarianceThreshold
 from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier, GradientBoostingClassifier
-from sklearn.metrics import roc_curve, auc, RocCurveDisplay
+from sklearn.metrics import roc_curve, auc, RocCurveDisplay, precision_recall_curve, average_precision_score, PrecisionRecallDisplay
 from sklearn.svm import SVC, LinearSVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.base import BaseEstimator, TransformerMixin, clone
+from sklearn.decomposition import PCA
 from xgboost import XGBClassifier, to_graphviz
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
 import mlflow
 import mlflow.sklearn
 from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as path_effects
 import seaborn as sns
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 import warnings
+from functions import count_meta, basic_train, IntToFloatTransformer
+import re
 
 from sklearn.tree import plot_tree, export_text
 from xgboost import plot_tree as xgb_plot_tree
@@ -68,32 +72,50 @@ s_meta = pd.read_csv(s_meta_file)
 meta_columns = s_meta.columns.tolist()
 
 meta_cols = 0 # Initialise
-# Detect metadata columns in the dataset
-def count_meta(dataset, name, metadata_features, drop):
-    matched = False # Initialise
-    existing_columns = dataset.columns.tolist()
-    col_number = 0 # Initialise
-    for col in reversed(metadata_features):
-        if col in existing_columns:
-            matched = True
-            if show_detail:
-                print(f"\nMetadata columns in {name}:")
-                print(dataset.columns.get_loc(col) + 1) # +1 for 1-based indexing conversion / allows for splicing where the first number is inclusive and the second exclusive
-            col_number = dataset.columns.get_loc(col) + 1
-            break
-    if not matched:
-        if show_detail:
-            print("No metadata columns found.")
-    if drop: # Drop the metadata if bool is true
-        dataset = dataset.iloc[:, col_number:]
-        col_number = 0 # Now removed all metadata so count is 0
-        print(f"Metadata was dropped from {name}; if unintended, disable drop_metadata in the script.")
-    return col_number,dataset
 
-# Call function
-meta_cols,X_train = count_meta(X_train, "X_train", meta_columns, drop_metadata)
-meta_cols,X_test = count_meta(X_test, "X_test", meta_columns, drop_metadata) # Colummn # should be identical for test and train, so can just reassign
+# Call function to count metadata columns
+meta_cols,X_train = count_meta(X_train, "X_train", meta_columns, drop_metadata, show_detail)
+meta_cols,X_test = count_meta(X_test, "X_test", meta_columns, drop_metadata, show_detail) # Colummn # should be identical for test and train, so can just reassign
 
+
+### PCA ON ORIGINAL DATA ###############################################################################################
+try:
+    # Combine train and test
+    X_full = pd.concat([X_train, X_test]).values
+    y_full = np.concatenate([y_train, y_test])
+
+    # Standardize
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_full)
+
+    # PCA
+    pca = PCA(n_components=2)
+    principal_components = pca.fit_transform(X_scaled)
+
+    plt.figure(figsize=(14, 10))
+
+    # Plot directly from arrays
+    plt.scatter(principal_components[y_full == 0, 0],
+                principal_components[y_full == 0, 1],
+                c='#088BDD', alpha=0.7, label='Does not require O₂')
+    plt.scatter(principal_components[y_full == 1, 0],
+                principal_components[y_full == 1, 1],
+                c='red', alpha=0.7, label='Requires O₂')
+
+    # Add explained variance
+    explained_var = pca.explained_variance_ratio_ * 100
+    plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
+    plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
+    plt.title('PCA of Full Dataset - Surrey')
+    plt.grid(alpha=0.3)
+    plt.legend()
+
+    # Save and show
+    plt.savefig("pca_all_data.png", dpi=200, bbox_inches='tight')
+    plt.close()
+
+except Exception as e:
+    print(f"Error creating PCA biplot on full dataset: {str(e)}")
 ### VARIANCE THRESHOLDING ##############################################################################################
   # Applied in the scikit-learn pipeline
  # IMPROVE currently set to 0 variance (which removes none of my data) and got a better result - can experiment with other values later. Since sample # is low it may be best with minimal filtering
@@ -287,64 +309,10 @@ basic_training = True
 # Initialise dict to store best results per model
 top_model_scores = {}
 
-# Basic model training function to get some initial scores and decide which model to proceed with
-def basic_train(model, X_train, y_train, identifier, scores_dict):
-    # Iterate over feature selectors
-    model_results = {}
-    for fs_name, selector_config in feature_selectors.items():
-        # Build selector from configuration
-        if fs_name == 'NONE':
-            selector = 'passthrough'
-        else:
-            # Instantiate selector with base parameters
-            selector = selector_config['class'](**selector_config['base_params'])
-
-        # Create a pipeline with a) the required preprocessing steps and b) the FS and model. This is then applied to each CV fold to avoid data leakage vs applying to all of X_train
-        pipe = Pipeline([
-            ('preprocessor', Pipeline([
-                ('int_to_float', IntToFloatTransformer()),
-                ('var_thresh', VarianceThreshold(threshold=threshold)),
-                ('scaler', StandardScaler())
-            ])),
-            ('feature_selector', selector if feature_selection else 'passthrough'),
-            ('classifier', model)
-        ])
-        try:
-            # 10-fold cross validation for F1 score and accuracy
-            f1_val = cross_val_score(pipe, X_train, y_train, scoring='f1', cv=StratifiedKFold(10, shuffle=True, random_state=42))
-            accuracy_val = cross_val_score(pipe, X_train, y_train, scoring='accuracy', cv=StratifiedKFold(10, shuffle=True, random_state=42))
-
-            # Fit the pipeline on the training data
-            pipe.fit(X_train, y_train)
-            y_pred = pipe.predict(X_train)
-            f1_train = f1_score(y_train, y_pred)
-            accuracy_train = accuracy_score(y_train, y_pred)
-
-            #model_results[fs_name] = [identifier, fs_name, f1_train, f1_val.mean(), accuracy_train, accuracy_val.mean()]
-            model_results[fs_name] = [identifier, fs_name, accuracy_train, accuracy_val.mean(), f1_train, f1_val.mean(), ]
-            print(f"Training of {identifier} using {fs_name} complete.")
-        except Exception as e:
-            print(f"Error training {identifier} with {fs_name}: {str(e)}")
-            model_results[identifier] = [identifier, None, None, None, None, None]
-    # Print results from best feature selection methods
-    model_results_df = pd.DataFrame.from_dict(model_results,
-                           orient='index',
-                           columns=['Model', 'Selector', 'Train Accuracy', 'CV Accuracy', 'Train F1',
-                                    'Test F1']).sort_values(by=['Test F1'], ascending=False)
-    print(f"Metrics from {identifier} experimentation:")
-    print(model_results_df, "\n")
-    # Take the top result unless empty
-    if model_results_df.empty:
-        scores_dict[identifier] = [identifier, None, None, None, None, None]
-        print(f"All feature selection methods failed for {identifier}.")
-    else:
-        scores_dict[identifier] = model_results_df.iloc[0].to_list()
-    print(f"Finished training {identifier}")
-
 # Determine which models to test
 Logistic_regression = False
 SVM = False
-Random_forest = False
+Random_forest = True
 AdaBoost = False
 Gradient_boosting = False
 XGBoost = True
@@ -367,38 +335,38 @@ if basic_training:
     # Logistic Regression
     if Logistic_regression:
         log_reg = LogisticRegression(solver='saga', tol=1e-4, max_iter=1500)
-        basic_train(log_reg, X_train, y_train, 'Logistic Regression', top_model_scores)
+        basic_train(log_reg, X_train, y_train, 'Logistic Regression', top_model_scores, feature_selectors, feature_selection, threshold)
 
     # SVM
     if SVM:
         svc_clf = SVC()
-        basic_train(svc_clf, X_train, y_train, 'Support Vector Classifier', top_model_scores)
+        basic_train(svc_clf, X_train, y_train, 'Support Vector Classifier', top_model_scores, feature_selectors, feature_selection, threshold)
 
     # Random Forest
     if Random_forest:
         rnd_clf = RandomForestClassifier(random_state=42)
-        basic_train(rnd_clf, X_train, y_train, 'RandomForestClassifier', top_model_scores)
+        basic_train(rnd_clf, X_train, y_train, 'RandomForestClassifier', top_model_scores, feature_selectors, feature_selection, threshold)
 
     # AdaBoost
     if AdaBoost:
         dt_clf_ada = DecisionTreeClassifier()
         ada_clf = AdaBoostClassifier(estimator=dt_clf_ada, random_state=42)
-        basic_train(ada_clf, X_train, y_train, "AdaBoost Classifier", top_model_scores)
+        basic_train(ada_clf, X_train, y_train, "AdaBoost Classifier", top_model_scores, feature_selectors, feature_selection, threshold)
 
     # GradientBoosting
     if Gradient_boosting:
         gdb_clf = GradientBoostingClassifier(random_state=42, subsample=0.8)
-        basic_train(gdb_clf, X_train, y_train, "GradientBoosting Classifier", top_model_scores)
+        basic_train(gdb_clf, X_train, y_train, "GradientBoosting Classifier", top_model_scores, feature_selectors, feature_selection, threshold)
 
     # XGBoost
     if XGBoost:
         xgb_clf = XGBClassifier(verbosity=0)
-        basic_train(xgb_clf, X_train, y_train, "XGBoost Classifier", top_model_scores)
+        basic_train(xgb_clf, X_train, y_train, "XGBoost Classifier", top_model_scores, feature_selectors, feature_selection, threshold)
 
     # KNN
     if KNN:
         knn_clf = KNeighborsClassifier()
-        basic_train(knn_clf, X_train, y_train, 'K-Nearest Neighbors Classifier', top_model_scores)
+        basic_train(knn_clf, X_train, y_train, 'K-Nearest Neighbors Classifier', top_model_scores, feature_selectors, feature_selection, threshold)
 
     # Make dataframe of model scores and print results
     scores = pd.DataFrame.from_dict(top_model_scores,
@@ -628,14 +596,14 @@ if type_translation['xgb'] in best_models_fs:
     best_spaces.append({
         'type': 'xgb',
         'max_depth': hp.quniform("xgb_max_depth", 3, 15, 1),
-        'gamma': hp.uniform('xgb_gamma', 1, 9),
-        'reg_alpha': hp.quniform('xgb_reg_alpha', 10, 180, 1),
+        'gamma': hp.uniform('xgb_gamma', 1, 7),
+        'reg_alpha': hp.uniform('xgb_reg_alpha', 0, 5),
         'reg_lambda': hp.uniform('xgb_reg_lambda', 0, 5),
         'colsample_bytree': hp.uniform('xgb_colsample_bytree', 0.5, 1),
-        'min_child_weight': hp.quniform('xgb_min_child_weight', 0, 10, 1),
-        'n_estimators': hp.quniform('xgb_n_estimators', 100, 500, 50),
+        'min_child_weight': hp.quniform('xgb_min_child_weight', 1, 10, 1),
+        'n_estimators': hp.quniform('xgb_n_estimators', 50, 500, 50),
         'seed': 0,
-        'learning_rate': hp.uniform('xgb_learning_rate', 0.01, 0.3),
+        'learning_rate': hp.uniform('xgb_learning_rate', 0.05, 0.3),
         'scale_pos_weight': hp.uniform('xgb_scale_pos_weight', 1, 10),  # Adjust if classes are imbalanced
         'max_delta_step': hp.uniform('xgb_max_delta_step', 0, 10),
         'random_state': 42,
@@ -710,7 +678,7 @@ print(best_config_df)
 # Train final model using the full training data
 mlflow.sklearn.autolog()
 with mlflow.start_run():
-    # Extract best classifier type
+    # Extract the best classifier type
     classifier_type = best_config['type']
 
     # Get parameters for the classifier and feature selector
@@ -825,6 +793,51 @@ with mlflow.start_run():
     print(f"Test F1 score with best model ({classifier_type}): {test_f1:.4f}")
 
 ### GRAPHS #############################################################################################################
+    ### Plot PCA on the combined dataset - i.e. original data after feature selection
+    with mlflow.start_run(nested=True): #Start another run to avoid auologging conflicts
+        mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
+        # Combine X/y train and test for full dataset visualization
+        X_full = pd.concat([X_train, X_test])
+        X_selected = X_full[selected_features]
+        y_full = pd.concat([y_train, y_test]).reset_index(drop=True)
+
+        # Standardize the selected data
+        scaler = StandardScaler() # WARNING Avoiding using the same one as in the pipeline to prevent data leakage - not sure if it's an issue but it will error when called later if used here due to different number of features -
+        X_scaled = scaler.fit_transform(X_selected)
+
+        # Perform PCA
+        pca = PCA(n_components=2)
+        principal_components = pca.fit_transform(X_scaled)
+        pc_df = pd.DataFrame(data=principal_components, columns=['PC1', 'PC2'])
+        pc_df = pc_df.reset_index(drop=True)  # Ensure index alignment
+
+        plt.figure(figsize=(14, 10))
+
+        # Create boolean masks
+        class_0_mask = (y_full == 0)
+        class_1_mask = (y_full == 1)
+
+        # Plot using the aligned indices
+        plt.scatter(pc_df.loc[class_0_mask, 'PC1'],
+                    pc_df.loc[class_0_mask, 'PC2'],
+                    c='#088BDD', alpha=0.7, label='Does not require O2')
+        plt.scatter(pc_df.loc[class_1_mask, 'PC1'],
+                    pc_df.loc[class_1_mask, 'PC2'],
+                    c='red', alpha=0.7, label='Requires O2')
+
+        # Add explained variance
+        explained_var = pca.explained_variance_ratio_ * 100
+        plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
+        plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
+        plt.title('PCA After Feature Selection')
+        plt.grid(alpha=0.3)
+        plt.legend()
+
+        # Save and show
+        plt.savefig("pca_full_dataset_after_FS.png", dpi=150, bbox_inches='tight')
+        plt.close()
+        mlflow.log_artifact("pca_full_dataset_after_FS.png")
+
     ### Plot learning curve
     # Compute scores at varying training sizes
     train_sizes, train_scores, val_scores = learning_curve(
@@ -1088,7 +1101,7 @@ with mlflow.start_run():
     class_names = np.array(['No_Oxygen_Need', 'Oxygen_Need'])  # Replace with your class names
 
     ### Plot decision tree for tree-based models #TODO: Basic version - when a final best model is obtained this graph can be fine tuned if useful for the final report
-    if classifier_type in ['rf', 'gb', 'xgb']: #TODO untested for xgb and gb
+    if classifier_type in ['rf', 'gb', 'xgb']: #TODO untested for gb - and could use refinement of outputs
         try:
             # Extract classifier from pipeline
             clf = final_pipeline.named_steps['classifier']
@@ -1127,9 +1140,9 @@ with mlflow.start_run():
                     f.write(tree_rules)
                 mlflow.log_artifact("tree_rules_1.txt")
 
-            elif classifier_type == 'gb':  # Gradient Boosting
-                estimator = clf.estimators_[0, 0]
+            elif classifier_type == 'gb': #todo check if same sanitising/list format is required as in xgb; if so group in an elif before handling each separately
                 plt.figure(figsize=(25, 15))
+                estimator = clf.estimators_[0, 0]
                 plot_tree(estimator,
                           feature_names=feature_names,
                           class_names=class_names,
@@ -1141,26 +1154,167 @@ with mlflow.start_run():
                 mlflow.log_artifact("decision_tree_1.png")
                 plt.close()
 
-            elif classifier_type == 'xgb':  # XGBoost
+            elif classifier_type == 'xgb':
+                # Sanitise feature names/convert to list for XGB - Replace non-alphanumeric with underscores
+                feature_names = list(feature_names.astype(str))
+                sanitised_feature_names = [re.sub(r'[^a-zA-Z0-9_]', '_', str(f)) for f in feature_names]
+                feature_names = sanitised_feature_names
+
+                # Ensure names are unique after sanitization #todo make cleaner
+                seen = {}
+                for i, name in enumerate(feature_names):
+                    if feature_names.count(name) > 1:
+                        feature_names[i] = f"{name}_1"
+                        print(f"{name} occurs multiple times; appended _{i}.")
+
+                # Set sanitised feature names on the booster
+                booster = clf.get_booster()
+                booster.feature_names = feature_names
+                # Plot
                 plt.figure(figsize=(25, 15))
-                xgb_plot_tree(clf, num_trees=0, rankdir='LR')
+                xgb_plot_tree(clf, tree_idx=0, rankdir='LR')
                 plt.title("XGBoost - First Tree")
                 plt.savefig("decision_tree_1.png", dpi=200, bbox_inches='tight')
                 mlflow.log_artifact("decision_tree_1.png")
                 plt.close()
 
-                # Export JSON representation
-                clf.save_model("xgb_tree.json")
-                mlflow.log_artifact("xgb_tree.json")
+                # Check size of trees
+                show_size = False
+                if show_size:
+                    for i in range(50):  # Adjust range as needed
+                        dot = to_graphviz(clf, tree_idx=i)
+                        tree_str = dot.source
+                        print(f"Tree {i}: {'leaf=' in tree_str} | size: {len(tree_str)}")
 
-                # Save interactive version # TODO install graphviz
-                # to_graphviz(clf, with_stats=True)
+                # Save interactive version # TODO look into supertree
+                dot = to_graphviz(clf, with_stats=True, feature_names=feature_names)
+                dot.render(filename='xgb_tree_graph_1', format='svg') # Saves to svg - zoomable in browser
 
             else:
                 print(f"Decision tree plotting not supported for {classifier_type}")
 
         except Exception as e:
             print(f"Error plotting decision tree: {str(e)}")
+
+    ### Plot a precision-recall curve
+    try:
+        # Get prediction probabilities
+        if hasattr(final_pipeline, 'predict_proba'):
+            y_proba = final_pipeline.predict_proba(X_test)[:, 1]
+        elif hasattr(final_pipeline, 'decision_function'): # For models that use decision_function instead of predict_proba
+            decision_scores = final_pipeline.decision_function(X_test)
+            y_proba = (decision_scores - decision_scores.min()) / (decision_scores.max() - decision_scores.min())
+        else:
+            raise RuntimeError("Model doesn't support probability estimates")
+
+        # Compute Precision-Recall curve
+        precision, recall, _ = precision_recall_curve(y_test, y_proba)
+        average_precision = average_precision_score(y_test, y_proba)
+
+        # Plot the curve
+        fig, ax = plt.subplots()
+        PrecisionRecallDisplay(precision=precision, recall=recall, average_precision=average_precision).plot(ax=ax)
+        ax.set_title(f"Precision-Recall Curve (AP = {average_precision:.2f})")
+
+        # Save and log
+        plt.savefig("precision_recall_curve.png", dpi=150, bbox_inches='tight')
+        mlflow.log_figure(fig, "precision_recall_curve.png")
+        plt.close(fig)
+
+        # Log the average precision metric
+        mlflow.log_metric("average_precision", average_precision)
+        print(f"Precision-Recall curve saved (AP: {average_precision:.3f})")
+
+    except Exception as e:
+        print(f"Error generating Precision-Recall curve: {str(e)}")
+
+    ### Plot PCA on final predictions - Test data
+    with mlflow.start_run(nested=True):  # Start another run to avoid auologging conflicts
+        mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
+        # Select the features determined by feature selection
+        X_selected = X_test[selected_features]
+
+        # Reset y index to avoid errors # IMPROVE for this and other PCA, check index resetting or rewrite to avoid
+        y_test = y_test.reset_index(drop=True)
+
+        # Standardize the selected data
+        scaler = StandardScaler() # WARNING Avoiding using the same one as in the pipeline to prevent data leakage - not sure if it's an issue but an error occurs when using the pipeline ver in the second PCA above
+        X_scaled = scaler.fit_transform(X_selected)
+
+        # Perform PCA
+        pca = PCA(n_components=2)
+        principal_components = pca.fit_transform(X_scaled)
+        pc_df = pd.DataFrame(data=principal_components, columns=['PC1', 'PC2'])
+        pc_df = pc_df.reset_index(drop=True)  # Ensure index alignment
+
+        plt.figure(figsize=(7, 5))
+
+        # Create boolean masks
+        class_0_mask = (y_test == 0)
+        class_1_mask = (y_test == 1)
+
+        # Plot using the aligned indices
+        plt.scatter(pc_df.loc[class_0_mask, 'PC1'],
+                    pc_df.loc[class_0_mask, 'PC2'],
+                    c='#088BDD', alpha=0.7, label='Does not require O2')
+        plt.scatter(pc_df.loc[class_1_mask, 'PC1'],
+                    pc_df.loc[class_1_mask, 'PC2'],
+                    c='red', alpha=0.7, label='Requires O2')
+
+        # Add explained variance
+        explained_var = pca.explained_variance_ratio_ * 100
+        plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
+        plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
+        plt.title('PCA of test data - ground truth')
+        plt.grid(alpha=0.3)
+        plt.legend()
+
+        # Save and show
+        plt.savefig("pca_test_before_prediction.png", dpi=200, bbox_inches='tight')
+        plt.close()
+        mlflow.log_artifact("pca_test_before_prediction.png")
+
+        ### Create a second PCA colour coded by TP/FP/TN/FN
+        # Create masks for each outcome type
+        mask_tn = (y_test == 0) & (y_pred == 0)  # True Negative
+        mask_fp = (y_test == 0) & (y_pred == 1)  # False Positive
+        mask_fn = (y_test == 1) & (y_pred == 0)  # False Negative
+        mask_tp = (y_test == 1) & (y_pred == 1)  # True Positive
+
+        # Create plot with distinct colors # TODO: COuld switch colours for FN FP if more legible that way
+        plt.figure(figsize=(7, 5))
+        plt.scatter(pc_df.loc[mask_tn, 'PC1'], pc_df.loc[mask_tn, 'PC2'],
+                    c='#088BDD', alpha=0.7, label='True Negative') # Blue = negative (doesn't need O2)
+        plt.scatter(pc_df.loc[mask_fp, 'PC1'], pc_df.loc[mask_fp, 'PC2'],
+                    c='#084769', alpha=0.7, label='False Positive') # Dark blue = Predicted positive but should be negative
+        plt.scatter(pc_df.loc[mask_fn, 'PC1'], pc_df.loc[mask_fn, 'PC2'],
+                    c='#780000', alpha=0.7, label='False Negative') # Dark red = Predicted negative but should be positive
+        plt.scatter(pc_df.loc[mask_tp, 'PC1'], pc_df.loc[mask_tp, 'PC2'],
+                    c='red', alpha=0.7, label='True Positive') # Red = Postive (needs O2)
+
+        # Add labels and title
+        plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
+        plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
+        plt.title('PCA of test data (Prediction outcomes)')
+        plt.grid(alpha=0.3)
+        plt.legend()
+
+        # Add count annotations
+        counts = {
+            'TN': mask_tn.sum(),
+            'FP': mask_fp.sum(),
+            'FN': mask_fn.sum(),
+            'TP': mask_tp.sum()
+        }
+        plt.figtext(0.15, 0.01,
+                    f"TN: {counts['TN']} | FP: {counts['FP']} | FN: {counts['FN']} | TP: {counts['TP']}",
+                    ha="center", fontsize=12,
+                    bbox={"facecolor": "white", "alpha": 0.8, "pad": 5})
+
+        # Save and log
+        plt.savefig("pca_test_prediction_outcomes.png", dpi=200, bbox_inches='tight')
+        plt.close()
+        mlflow.log_artifact("pca_test_prediction_outcomes.png")
 
 # Example output:
 # Test accuracy with best model (rf): 0.6000
