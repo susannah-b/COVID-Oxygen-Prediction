@@ -573,6 +573,15 @@ merged.iloc[:,meta_cols:] = np.log2(merged.iloc[:,meta_cols:] + 1e-6) # IMPROVE 
 # Save final dataset to csv
 merged.to_csv("Surrey_final.csv")
 
+### PLOT CLASS DISTRIBUTION ############################################################################################
+plt.figure(figsize=(10, 6))
+sns.countplot(x='O2 req.', data=merged, palette='Blues_d', edgecolor='black', hue='O2 req.',
+            legend=False)
+plt.title('O2 requirement class distribution - Full Surrey dataset')
+plt.xlabel('O2 required')
+plt.ylabel('Count')
+plt.savefig('class_distribution.png', dpi=200)
+
 ### TRAIN.TEST SPLIT - KEEP PATIENT DATA TOGETHER ######################################################################
 # Extract patient IDs from the index
 patient_groups = merged.index.str[:3].tolist()

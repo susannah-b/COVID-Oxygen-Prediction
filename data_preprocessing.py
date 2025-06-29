@@ -9,7 +9,6 @@ from pathlib import Path
 import missingno as msno
 import miceforest as mf
 from sklearn.preprocessing import LabelEncoder
-
 # TODO delete any unused at end
 
 # WARNING NOTE IMPORTANT for test and train imputation, num_datsets and iterations are very low in an attempt to get it to run. must be changed and run on hpc
@@ -28,6 +27,7 @@ train = pd.read_csv(train_path, index_col=0)
 test = pd.read_csv(test_path, index_col=0)
 full_dataset = pd.read_csv(full_path, index_col=0)
 
+### SPLIT DATA #########################################################################################################
 # Split train and test data into X and y
 X_train = train.drop('O2 req.',axis=1)
 y_train = train['O2 req.'].copy()
@@ -122,7 +122,7 @@ for cat, codes in ordinal_cats.items():
 #     X_train[cat] = pd.Categorical(X_train[cat], ordered=False)
 #     X_test[cat] = pd.Categorical(X_test[cat], ordered=False)
 
-### NORMALISE PROTEOMICS DATA ##########################################################################################
+### NORMALISE PROTEOMICS DATA ########################################################################################## #TODO is it better to impute first?
 # Separate into meta and MS data
 X_train_meta = X_train.iloc[:, :meta_cols] # IMPROVE not currently used - could delete
 X_train_quant = X_train.iloc[:, meta_cols:]
