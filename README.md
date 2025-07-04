@@ -8,7 +8,7 @@ In this project, we will consolidate the patient data, pre-process the data (inc
 
 ## Scripts
 Scripts should be run in the following order:
-- **data_investigation.py:** Initial cleaning, consolidation, and train-test split of the patient data for Surrey.
+- **data_investigation.py:** Initial cleaning, consolidation, and train-test split of the patient data for Surrey. Note that this script will need to be run for each dataset with the 'validate' bool disabled for the original Surrey dataset, and enabled when processing ISARIC. The option 'validation_compatible' should be enabled for the Surrey data if planning to later validate with ISARIC.
 - **data_preprocessing.py:** Imputing, encoding, and separating into features and target variable.
 - **model_building.py:** Scaling, feature selection, identification of candidate models, hyperparameter tuning, training of the final model, prediction, and evaluation of the model.
 
