@@ -11,6 +11,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import missingno as msno
 from sklearn.model_selection import GroupShuffleSplit
+import os
 
 # Set pandas to display all columns and longer rows # IMPROVE remove in final version
 pd.set_option('display.max_columns', None)
@@ -38,7 +39,7 @@ sample_inves_8 = False # Numerical conversion
 # Bool to determine whether to make the Surrey (training) data compatible with external validation data (ISARIC)
 validation_compatible = True # Will drop some incompatible columns
 # Bool to determine which dataset is being processed. False = Surrey, True = ISARIC.
-validate = True # Switch on if processing the validation dataset
+validate = False # Switch on if processing the validation dataset
 
 # Read in data
 quant_file = Path(__file__).parent / "Surrey_Files" / "KR_Covid_DIA_Pt_gene_Serum30_Report_Protein Quant (Pivot).xls"
@@ -49,6 +50,20 @@ quant = pd.read_csv(quant_file, sep='\t').T # Transpose so sample IDs are rows
 s_meta = pd.read_csv(s_meta_file)
 isaric = pd.read_csv(isaric_file, index_col=0) # Avoid creating Unnamed: 0 column
 phosp = pd.read_excel(phosp_file)
+
+# Create output directories for the data
+if not validate:
+    output_dir = 'training_data' # Combine with other training graphs if using training data
+else:
+    output_dir = 'validation_data' # Combine with other validation graphs if using training data
+os.makedirs(output_dir, exist_ok=True)
+
+# Create output directory for the graphs
+if not validate:
+    graphs_dir = 'training_graphs' # Combine with other training graphs if using training data
+else:
+    graphs_dir = 'validation_graphs' # Combine with other validation graphs if using training data
+os.makedirs(graphs_dir, exist_ok=True)
 
 # Quant data preprocessing
 quant.columns = quant.iloc[0] # Set protein names (now row 0) as column headers
@@ -117,7 +132,7 @@ else: # For Surrey
 # Investigate the IDs to find which samples are relevant
 quant_ids = quant.index.to_series()
 if sample_inves_2:
-    quant_ids.to_csv("Quant_IDs.csv", index=False, header=False) # For easier examination
+    quant_ids.to_csv(f"{output_dir}/Quant_IDs.csv", index=False, header=False) # For easier examination
     print("Length before processing:", len(quant_ids))
     # Result: Using the Meta_plates.csv file, we can remove samples that belong to other datasets. As these SIDs are in
     # a different format, for simplicity the trends in SIDs are simply reported here, although ideally this would be
@@ -278,7 +293,7 @@ if sample_inves_3:
 # test['s_meta_samples'] = s_meta['Sample']
 # test['s_meta_mod'] = s_meta['Sample Modified']
 # #test['quant'] = quant_surrey
-# test.to_csv("test.csv")
+# test.to_csv(f"{output_dir}/test.csv")
 
 ### COMBINE ISARIC AND PHOSP METADATA ##################################################################################
 #  Some samples are covered in each, and the PHOSP data takes samples at admission point which is more comparable to
@@ -294,10 +309,10 @@ if validate:
 if not validate:
     s_meta_mod = s_meta.set_index('Sample Modified') # Define new index with modified sample names to match quant
     merged = s_meta_mod.join(quant_samples, how='inner')
-    merged.to_csv("Surrey_data_combined_all.csv") # Note this has the unmodified column names (e.g. whitespace)
+    merged.to_csv(f"{output_dir}/Surrey_data_combined_all.csv") # Note this has the unmodified column names (e.g. whitespace)
 else:
     merged = isaric_all.join(quant_samples, how='inner')
-    merged.to_csv("ISARIC_data_combined_all.csv")
+    merged.to_csv(f"{output_dir}/ISARIC_data_combined_all.csv")
 
 ### CLEAN UP COLUMNS ###################################################################################################
 merged.columns = merged.columns.str.strip() # Remove whitespace surrounding columns
@@ -366,21 +381,20 @@ remove_cols = ['Sample', # Stored as row indexes
                #'Days_between' #TODO can drop this if doing D0 only - take out of remove_isaric if so
                ]
 # Remove Surrey columns that are incompatible with the ISARIC validation set (i.e. not found in both)
-if validate:
-    remove_isaric = ['Chol', # Unsure on this columns meaning, but I can't see anything that might correspond in ISARIC
-                     'Airway Disease', # ISARIC as info on COPD and asthma but not OSA or pulmonary fibrosis
-                     'BMI', # Exists in PHOSP but is NaN for all
-                     'Clinical Covid (Y/N)', # Couldn't find relevant column in ISARIC data
-                     'For escalation? (Y/N)', # Couldn't find relevant column in ISARIC data
-                     'PBMC No Calculation', # Couldn't find relevant column in ISARIC data
-                     'PBMC No', # Couldn't find relevant column in ISARIC data
-                     'Survived Admission', # Couldn't find relevant column in ISARIC data
-                     'Days_between', # Irrelevant as using D0 samples only
-                     'MADU admission', # Couldn't find relevant column in ISARIC data
-                     'Survived Admission', # Couldn't find relevant column in ISARIC data
-                     'Weight (kg)' # Exists in PHOSP but is NaN for all
-                     'Days_between' # Not relevant as only doing the first time point (day 1/admission where specific)
-                     ]
+remove_isaric = ['Chol', # Unsure on this columns meaning, but I can't see anything that might correspond in ISARIC
+                 'Airway Disease', # ISARIC as info on COPD and asthma but not OSA or pulmonary fibrosis
+                 'BMI', # Exists in PHOSP but is NaN for all
+                 'Clinical Covid (Y/N)', # Couldn't find relevant column in ISARIC data
+                 'For escalation? (Y/N)', # Couldn't find relevant column in ISARIC data
+                 'PBMC No Calculation', # Couldn't find relevant column in ISARIC data
+                 'PBMC No', # Couldn't find relevant column in ISARIC data
+                 'Survived Admission', # Couldn't find relevant column in ISARIC data
+                 'Days_between', # Irrelevant as using D0 samples only
+                 'MADU admission', # Couldn't find relevant column in ISARIC data
+                 'Survived Admission', # Couldn't find relevant column in ISARIC data
+                 'Weight (kg)', # Exists in PHOSP but is NaN for all
+                 'Days_between' # Not relevant as only doing the first time point (day 1/admission where specific)
+                 ]
 
 # And drop them from the Surrey dataset
 if not validate:
@@ -491,12 +505,13 @@ if not validate:
     merged.replace({'MADU admission' : ['No']}, 'N', inplace = True)
     # PBMC No
     merged.replace({'PBMC No' : ['Too many to count']}, 600, inplace = True) # IMPROVE this is estimated based on the highest value being 590, so as not to lose the fact that it's high vs putting NaN. But really this should be determined using the instrument specs.
-    # PBMC No Calculation
-    merged.replace({'PBMC No Calculation' : [' N/A ']}, np.nan, inplace = True) #TODO I think this is a valid approach; N/A is used when PMBC is either empty or too high so it does combine those two which might not be ideal, but I want to keep ordinality
-    merged['PBMC No Calculation'] = pd.to_numeric(merged['PBMC No Calculation'].str.replace(',', ''), errors='coerce') # Convert strings to numeric, else NaN - IMPROVE beware if doing for new data to not accidentally convert any text to NaN
     # Survived Admission
     merged.replace({'Survived Admission' : ['Y ']}, 'Y', inplace = True)
     merged.replace({'Survived Admission' : ['N ']}, 'N', inplace = True)
+    if not validation_compatible: # Otherwise these columns are dropped - PMBC No Calculation is the only one that doesn't silently error so must be handled separately
+        # PBMC No Calculation
+        merged.replace({'PBMC No Calculation': [' N/A ']}, np.nan, inplace=True)  # TODO I think this is a valid approach; N/A is used when PMBC is either empty or too high so it does combine those two which might not be ideal, but I want to keep ordinality
+        merged['PBMC No Calculation'] = pd.to_numeric(merged['PBMC No Calculation'].str.replace(',', ''), errors='coerce')  # Convert strings to numeric, else NaN - IMPROVE beware if doing for new data to not accidentally convert any text to NaN
 
 else: # For ISARIC, change values to match Surrey
     # Bilateral CXR changes
@@ -571,9 +586,9 @@ if sample_inves_6:
 
 # Save to csv # IMPROVE could remove this if it's not needed/later csvs are more useful
 if not validate:
-    merged.to_csv("Surrey_data_selected.csv")
+    merged.to_csv(f"{output_dir}/Surrey_data_selected.csv")
 else:
-    merged.to_csv("ISARIC_data_selected.csv")
+    merged.to_csv(f"{output_dir}/ISARIC_data_selected.csv")
 
 ### CLEAN UP SAMPLE ROW MISSINGNESS ####################################################################################
 # Remove any rows that are empty for O2 req, the target
@@ -610,7 +625,7 @@ for index, row in missing_distribution.iterrows():
     plt.text(row.name, row.Rows + 1,  # Offset above bar
              f'{row.Percentage}%', ha='center')
 plt.tight_layout()
-plt.savefig('missing_distribution.png', dpi=300)
+plt.savefig(f'{graphs_dir}/missing_distribution.png', dpi=300)
 
 # IMPROVE plot for quant data as well?
 
@@ -618,15 +633,15 @@ plt.savefig('missing_distribution.png', dpi=300)
 # Plot missingness before filtering (full dataset) #TODO some plots are blank - possibly due to too much data
 fig = msno.matrix(merged)
 fig_copy = fig.get_figure()
-fig_copy.savefig('Missingness_All-data_before_filtering.png', bbox_inches = 'tight')
+fig_copy.savefig(f'{graphs_dir}/Missingness_All-data_before_filtering.png', bbox_inches = 'tight')
 # Plot missingness of the metadata
 fig = msno.matrix(merged.iloc[:,0:meta_cols])
 fig_copy = fig.get_figure()
-fig_copy.savefig('Missingness_All-metadata_before_filtering.png', bbox_inches = 'tight')
+fig_copy.savefig(f'{graphs_dir}/Missingness_All-metadata_before_filtering.png', bbox_inches = 'tight')
 # Plot missingness of the quant data
 fig = msno.matrix(merged.iloc[:,meta_cols:])
 fig_copy = fig.get_figure()
-fig_copy.savefig('Missingness_All-quantdata_before_filtering.png', bbox_inches = 'tight')
+fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_before_filtering.png', bbox_inches = 'tight')
 
 # Note: columns with 100% missingness have already been removed prior to this
 
@@ -640,7 +655,7 @@ if sample_inves_7:
 # Extract missingness of below 30% and keep those columns
 merged_low_missing = merged_null_before[merged_null_before['Missing_Percentage_Before'] < 30].index.tolist()
 merged = merged[merged_low_missing]
-merged.to_csv("Surrey_data_low_missing.csv")
+merged.to_csv(f"{output_dir}/Surrey_data_low_missing.csv")
 
 if sample_inves_7:
     print("\nColumn count after filtering for missing data:")
@@ -654,7 +669,7 @@ merged_null_after['Missing_Percentage_After'] = (merged_null_after['Missing_Coun
 merged_null_summary = pd.concat([merged_null_before, merged_null_after], axis=1, sort=False).fillna('[Column removed]')
 
 # Save missingness info before and after filtering to csv
-merged_null_summary.to_csv("Missing_values_comparison.csv",
+merged_null_summary.to_csv(f"{output_dir}/Missing_values_comparison.csv",
                            header=["NA Count Before","Missingness (%) Before", "NA Count After","Missingness (%) After"],
                            float_format="%.1f")
 
@@ -682,15 +697,15 @@ else:
 # Plot missingness after filtering (full dataset)
 fig = msno.matrix(merged)
 fig_copy = fig.get_figure()
-fig_copy.savefig('Missingness_All-data_after_filtering.png', bbox_inches = 'tight')
+fig_copy.savefig(f'{graphs_dir}/Missingness_All-data_after_filtering.png', bbox_inches = 'tight')
 # Plot missingness of the metadata
 fig = msno.matrix(merged.iloc[:,0:meta_cols])
 fig_copy = fig.get_figure()
-fig_copy.savefig('Missingness_All-metadata_after_filtering.png', bbox_inches = 'tight')
+fig_copy.savefig(f'{graphs_dir}/Missingness_All-metadata_after_filtering.png', bbox_inches = 'tight')
 # Plot missingness of the quant data
 fig = msno.matrix(merged.iloc[:,meta_cols:]) # Note: This is currently 546-27=519 MS data columns
 fig_copy = fig.get_figure()
-fig_copy.savefig('Missingness_All-quantdata_after_filtering.png', bbox_inches = 'tight')
+fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_after_filtering.png', bbox_inches = 'tight')
 
 ### CONVERT TO NUMERICAL ###############################################################################################
 # WARNING: Note that this is only done for the columns that made it through filtering. With a larger dataset (and different
@@ -751,9 +766,9 @@ merged.iloc[:,meta_cols:] = np.log2(merged.iloc[:,meta_cols:] + 1e-6) # IMPROVE 
 
 # Save final dataset to csv
 if not validate:
-    merged.to_csv("Surrey_final.csv")
+    merged.to_csv(f"{output_dir}/Surrey_final.csv")
 else:
-    merged.to_csv("ISARIC_final.csv")
+    merged.to_csv(f"{output_dir}/ISARIC_final.csv")
 
 ### PLOT CLASS DISTRIBUTION ############################################################################################
 plt.figure(figsize=(10, 6))
@@ -766,7 +781,7 @@ else:
 plt.title(f'O2 requirement class distribution - {dataset} dataset')
 plt.xlabel('O2 required')
 plt.ylabel('Count')
-plt.savefig(f'class_distribution_{dataset}.png', dpi=200)
+plt.savefig(f'{graphs_dir}/class_distribution_{dataset}.png', dpi=200)
 
 ### TRAIN.TEST SPLIT - KEEP PATIENT DATA TOGETHER ######################################################################
 if not validate: # Keep ISARIC as one dataset; split Surrey
@@ -783,8 +798,8 @@ if not validate: # Keep ISARIC as one dataset; split Surrey
     test = merged.iloc[test_idx]
 
     # Save to csv
-    train.to_csv("Surrey_train.csv")
-    test.to_csv("Surrey_test.csv")
+    train.to_csv(f"{output_dir}/Surrey_train.csv")
+    test.to_csv(f"{output_dir}/Surrey_test.csv")
 
 
 # TODO: Expand data exploration further (e.g. from MH model data_exploration.py)

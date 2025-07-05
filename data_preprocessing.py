@@ -14,9 +14,14 @@ import miceforest as mf
 from pandas import Categorical
 from sklearn.preprocessing import LabelEncoder
 from data_investigation import isaric_cols #IMPROVE instead save to .txt and read in so the other script isn't re-run
+import os
 # TODO delete any unused at end
 
 # WARNING NOTE IMPORTANT for test and train imputation, num_datsets and iterations are very low in an attempt to get it to run. must be changed and run on hpc
+
+# WARNING untested for validate False after some changes to the file structure
+
+# IMPROVE: Ideally (as with data_investigation.py) the script would be split into functions in order to run for each dataset, vs current if/else style
 
 # Set pandas to display all columns
 pd.set_option('display.max_columns', None)
@@ -33,24 +38,42 @@ if not validate:
 else:
     dataset = 'ISARIC'
 
+# Create output directories for the data (and to read in previous outputs)
+if not validate:
+    data_dir = 'training_data' # Combine with other training graphs if using training data
+else:
+    data_dir = 'validation_data' # Combine with other validation graphs if using training data
+os.makedirs(data_dir, exist_ok=True)
+
+# Create output directory for the graphs
+if not validate:
+    graphs_dir = 'training_graphs' # Combine with other training graphs if using training data
+else:
+    graphs_dir = 'validation_graphs' # Combine with other validation graphs if using training data
+os.makedirs(graphs_dir, exist_ok=True)
+
 # Read in train and test data (and full dataset for testing) # TODO preserve patient groups? if not using D0 only - keep patient with same first three letters (same person) together
-train_path = Path(__file__).parent / "Surrey_train.csv"
-test_path = Path(__file__).parent / "Surrey_test.csv"
-full_path = Path(__file__).parent / "Surrey_final.csv"
-isaric_path = Path(__file__).parent / "ISARIC_final.csv"
-train = pd.read_csv(train_path, index_col=0)
-test = pd.read_csv(test_path, index_col=0)
-full_dataset = pd.read_csv(full_path, index_col=0)
-isaric = pd.read_csv(isaric_path, index_col=0)
+if not validate:
+    train_path = Path(__file__).parent / data_dir / "Surrey_train.csv"
+    test_path = Path(__file__).parent / data_dir / "Surrey_test.csv"
+    full_path = Path(__file__).parent / data_dir / "Surrey_final.csv"
+    train = pd.read_csv(train_path, index_col=0)
+    test = pd.read_csv(test_path, index_col=0)
+    full_dataset = pd.read_csv(full_path, index_col=0)
+else:
+    isaric_path = Path(__file__).parent / data_dir / "ISARIC_final.csv"
+    isaric = pd.read_csv(isaric_path, index_col=0)
 
 ### SPLIT DATA #########################################################################################################
 # Split train and test data into X and y
-surrey_X_train = train.drop('O2 req.',axis=1)
-surrey_y_train = train['O2 req.'].copy()
-X_test = test.drop('O2 req.',axis=1)
-y_test = test['O2 req.'].copy()
-isaric_X = isaric.drop('O2 req.',axis=1)
-isaric_y = isaric['O2 req.'].copy()
+if not validate:
+    surrey_X_train = train.drop('O2 req.',axis=1)
+    surrey_y_train = train['O2 req.'].copy()
+    X_test = test.drop('O2 req.',axis=1)
+    y_test = test['O2 req.'].copy()
+else:
+    isaric_X = isaric.drop('O2 req.',axis=1)
+    isaric_y = isaric['O2 req.'].copy()
 
 # Assign data based on validation bool
 if not validate:
@@ -72,7 +95,7 @@ if not validate:
     meta_file = Path(__file__).parent / "Surrey_Files" / "Surrey_Metadata_master_spreadsheet_130622_edit2.csv"
     meta = pd.read_csv(meta_file)
 else:
-    meta_file = Path(__file__).parent / "ISARIC_final.csv" # For ISARIC the combined quant file has to be used as the metadata in the original file is renamed
+    meta_file = Path(__file__).parent / data_dir / "ISARIC_final.csv" # For ISARIC the combined quant file has to be used as the metadata in the original file is renamed
     meta = pd.read_csv(meta_file)
     renamed_meta_cols = list(isaric_cols.values())
     kept_meta_cols = [col for col in renamed_meta_cols if col in meta.columns] # Filter to only columns that haven't been removed
@@ -151,7 +174,8 @@ for cat, codes in ordinal_cats.items():
     if cat in X_train.columns: # Check that the column is present - allows same dict to be used for multiple datasets
         # Convert to pandas category (ordered)
         X_train[cat] = pd.Categorical(X_train[cat], categories=codes, ordered=True)
-        X_test[cat] = pd.Categorical(X_test[cat], categories=codes, ordered=True)
+        if not validate:
+            X_test[cat] = pd.Categorical(X_test[cat], categories=codes, ordered=True)
 
 # Nominal categories - commented out for now as no nominal categories (also check as I realised my encoding above was previously wrong)
 # for cat in nominal_cats.keys():
@@ -183,14 +207,14 @@ plt.xlabel('Average Intensity (Log2)')
 plt.ylabel('Proportion of Missing Values')
 plt.grid(True)
 plt.tight_layout()
-plt.savefig(f'Missing_by_intensity_{dataset}.png')
+plt.savefig(f'{graphs_dir}/Missing_by_intensity_{dataset}.png')
 # Result: Greater missingness at lower intensities suggests MNAR prevalence due to left censoring (below detection limit)
 
 # Bool whether to impute - can turn this off to skip for future runs
 impute = False
 
-imputed_train = f"{dataset}_train_after_imputation.csv"
-imputed_test = f"{dataset}_test_after_imputation.csv"
+imputed_train = f"{data_dir}/{dataset}_train_after_imputation.csv"
+imputed_test = f"{data_dir}/{dataset}_test_after_imputation.csv"
 
 if impute:
     # Create a dataset to store intermediate columns for missingness handling
@@ -214,19 +238,19 @@ if impute:
     # # Save feature importance plot
     # fig1 = kernel.plot_feature_importance(dataset=0)
     # plt.tight_layout()
-    # plt.savefig('Surrey_feature_importance_plot.png')
+    # plt.savefig(f'{graphs_dir}/Surrey_feature_importance_plot.png')
     # plt.close(fig1)
     #
     # # Save imputed distributions plot
     # fig2 = kernel.plot_imputed_distributions()
     # plt.tight_layout()
-    # plt.savefig('Surrey_imputed_distributions_plot.png')
+    # plt.savefig(f'{graphs_dir}/Surrey_imputed_distributions_plot.png')
     # plt.close(fig2)
 
     # # Save mean convergence plot #todo added from documentation so need to check
     # fig3 = kernel.plot_mean_convergence(dataset=0)
     # plt.tight_layout()
-    # plt.savefig('Surrey_mean_convergence_plot.png')
+    # plt.savefig(f'{graphs_dir}/Surrey_mean_convergence_plot.png')
     # plt.close(fig3)
 
     # Return dataset with missing values imputed
@@ -272,19 +296,19 @@ if not validate: # Only Surrey has test data as ISARIC is kept as one file
         # todo check miceforest usage examples - see github
         # fig1 = kernel.plot_feature_importance(dataset=0)
         # plt.tight_layout()
-        # plt.savefig('Surrey_feature_importance_plot_test.png')
+        # plt.savefig(f'{graphs_dir}/Surrey_feature_importance_plot_test.png')
         # plt.close(fig1)
         #
         # # Save imputed distributions plot
         # fig2 = kernel.plot_imputed_distributions()
         # plt.tight_layout()
-        # plt.savefig('Surrey_imputed_distributions_plot_test.png')
+        # plt.savefig(f'{graphs_dir}/Surrey_imputed_distributions_plot_test.png')
         # plt.close(fig2)
 
         # # Save mean convergence plot
         # fig3 = kernel.plot_mean_convergence(dataset=0)
         # plt.tight_layout()
-        # plt.savefig('Surrey_mean_convergence_plot.png')
+        # plt.savefig(f'{graphs_dir}/Surrey_mean_convergence_plot.png')
         # plt.close(fig3)
 
         # Extract completed data
@@ -351,10 +375,10 @@ if not validate:
 
 ### SAVE DATA ##########################################################################################################
 # Write to csv for use in next script
-X_train.to_csv(f"{dataset}_X_train.csv", sep=",", index=True)
-y_train.to_csv(f"{dataset}_y_train.csv", sep=",", index=True)
+X_train.to_csv(f"{data_dir}/{dataset}_X_train.csv", sep=",", index=True)
+y_train.to_csv(f"{data_dir}/{dataset}_y_train.csv", sep=",", index=True)
 if not validate:
-    X_test.to_csv(f"{dataset}_X_test.csv", sep=",", index=True)
-    y_test.to_csv(f"{dataset}_y_test.csv", sep=",", index=True)
+    X_test.to_csv(f"{data_dir}/{dataset}_X_test.csv", sep=",", index=True)
+    y_test.to_csv(f"{data_dir}/{dataset}_y_test.csv", sep=",", index=True)
 
 #Improve: sklearn pipeline could probably improve the layout - or functions
