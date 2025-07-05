@@ -1,11 +1,20 @@
+### SCRIPT USAGE #######################################################################################################
+# Run this script to train the ML model using the Surrey dataset.
+# To use the run_name_config.txt, modify the file to start with the desired ID number and suffix in quotes, or delete to
+# generate a fresh file. The suffix string is optional.
+#   The run_name for MLflow will be produced in the format N_MMDD-HH:MM_[suffix]. Change the suffix to the desired string
+#   to represent the run, e.g. for runs without metadata "no_metadata" may be added.
+
+######### SETUP ########################################################################################################
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from sklearn.inspection import permutation_importance
 from sklearn.pipeline import Pipeline
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text
+from sklearn.calibration import calibration_curve, CalibrationDisplay
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, brier_score_loss
 from sklearn.model_selection import cross_val_score, StratifiedKFold, learning_curve, LearningCurveDisplay
 from sklearn.linear_model import LogisticRegression, Lasso
 from sklearn.feature_selection import SelectFromModel, SequentialFeatureSelector, f_classif, SelectKBest, RFECV, VarianceThreshold
@@ -16,26 +25,22 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.decomposition import PCA
 from xgboost import XGBClassifier, to_graphviz
+from xgboost import plot_tree as xgb_plot_tree
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
 import mlflow
 import mlflow.sklearn
 from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
-import matplotlib.patheffects as path_effects
 import seaborn as sns
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 import warnings
 from functions import count_meta, basic_train, IntToFloatTransformer
 import re
-
-from sklearn.tree import plot_tree, export_text
-from xgboost import plot_tree as xgb_plot_tree
-from sklearn.calibration import calibration_curve, CalibrationDisplay
-from sklearn.metrics import brier_score_loss
+import os
+from datetime import datetime
 # todo clean up at end
 
 # WARNING - suppress MLflow warning and precision warning - fix later
-from mlflow.exceptions import MlflowException
 warnings.filterwarnings("ignore", category=UserWarning, module="mlflow.types.utils")
 from sklearn.exceptions import UndefinedMetricWarning
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
@@ -61,6 +66,14 @@ X_test = pd.read_csv(X_path, index_col=0)
 y_test = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
 # Set pandas to display all columns
 pd.set_option('display.max_columns', None)
+
+# Create output directory for the data
+output_dir = 'Training_output' # todo update all tocsv and saves. then figure out running with mlflow. and save that to other dir
+os.makedirs(output_dir, exist_ok=True)
+
+# TODO: Note that some isaric columns were selected that might be innaccurate (eg day 1 x ray infiltrates as analogous to Bilateral CXR changes
+#  in Surrey data. It would be worth experimenting with dropping some of these here to see if the model improves (although if not feature-selected
+#  then it most likely has very minimal impact. Do here to avoid regenerating data, although technically it could affect imputation/scaling/maybe FS.
 
 ### OPTIONAL: DROP METADATA ############################################################################################ #TODO once the model is finished and can run on HPC, run with and without dropping to compare results
 drop_metadata = False # To experiment with excluding metadata from the model, enable this option
@@ -111,7 +124,7 @@ try:
     plt.legend()
 
     # Save and show
-    plt.savefig("pca_all_data.png", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{output_dir}/pca_all_data.png", dpi=200, bbox_inches='tight')
     plt.close()
 
 except Exception as e:
@@ -659,7 +672,7 @@ with mlflow.start_run():
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=500, #todo: increase on a better machine
+        max_evals=3, #todo: increase on a better machine
         trials=Trials()
     )
 
@@ -674,10 +687,40 @@ print("\nBest model configuration:")
 best_config_df = pd.DataFrame(list(best_config.items()), columns=['Parameters', 'Values'])
 print(best_config_df)
 
+### CREATE RUN ID ######################################################################################################
+# Note: Not actually very helpful - I set thinking this was the run name but is actually immutable. Left it in anyway as it
+# may be useful later on.
+config_path = Path("run_name_config.txt") # Path to file
+
+if not os.path.exists(config_path):
+    # If config file doesn't exist, create a 'blank' one
+    with open(config_path, 'w') as file:
+        file.write('1 ""')
+else:
+    ### Read in the run ID settings
+    with open(config_path, "r") as f:
+        content = f.read().strip()
+        # Extract numeric prefix and optional quoted suffix
+        match = re.match(r"(\d+)\s*(['\"]?)(.*?)\2?$", content) # Digit and optional quoted suffix
+        if not match:
+            raise ValueError("run_name_config.txt should be formatted like: 1 \"[string]\" or 1. Delete file to generate a fresh config, or modify accordingly.")
+        # Set ID info
+        run_number = int(match.group(1))
+        suffix = match.group(3)
+        timestamp = datetime.now().strftime("%m%d-%H:%M")
+        run_name = f"{run_number}_{timestamp}"
+        if suffix:
+            run_name = f"{run_name}_{suffix}"
+    # Increase the run_name by one for the next run
+    with open(config_path, "w") as f:
+        f.write(f"{run_number + 1} \"{suffix}\"")
+
 ### TRAIN FINAL MODEL ##################################################################################################
 # Train final model using the full training data
 mlflow.sklearn.autolog() # TODO have an option to set a run name
-with mlflow.start_run():
+with mlflow.start_run(run_name=run_name) as run:
+    mlflow.set_tag("custom_run_name", run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
+    mlflow.log_param("mlflow_run_name", run.info.run_name)
     # Extract the best classifier type
     classifier_type = best_config['type']
 
@@ -834,9 +877,9 @@ with mlflow.start_run():
         plt.legend()
 
         # Save and show
-        plt.savefig("pca_full_dataset_after_FS.png", dpi=150, bbox_inches='tight')
+        plt.savefig(f"{output_dir}/pca_full_dataset_after_FS.png", dpi=150, bbox_inches='tight')
         plt.close()
-        mlflow.log_artifact("pca_full_dataset_after_FS.png")
+        mlflow.log_artifact(f"{output_dir}/pca_full_dataset_after_FS.png")
 
     ### Plot learning curve
     # Compute scores at varying training sizes
@@ -854,14 +897,14 @@ with mlflow.start_run():
         train_scores=train_scores,
         test_scores=val_scores
     ).plot(ax=ax)
-    ax.set_ylabel("Score")
+    ax.set_ylabel("F1 Score")
     ax.set_title("Learning Curve")
 
     # Save the plot
-    plt.savefig("learning_curve.png", dpi=150, bbox_inches='tight')
+    plt.savefig(f"{output_dir}/learning_curve.png", dpi=200, bbox_inches='tight')
 
     # Log the figure as an MLflow artifact
-    mlflow.log_figure(fig, "learning_curve.png")
+    mlflow.log_figure(fig, f"{output_dir}/learning_curve.png")
     plt.close(fig)
 
     ### Plot ROC/AUC curves
@@ -876,10 +919,10 @@ with mlflow.start_run():
     fig, ax = plt.subplots()
     RocCurveDisplay(fpr=fpr, tpr=tpr, roc_auc=roc_auc).plot(ax=ax)
     ax.set_title(f"ROC Curve (AUC = {roc_auc:.2f})")
-    mlflow.log_figure(fig, "roc_curve.png")
+    mlflow.log_figure(fig, f"{output_dir}/roc_curve.png")
 
     # Save the plot
-    plt.savefig("roc_curve.png", dpi=150, bbox_inches='tight')
+    plt.savefig(f"{output_dir}/roc_curve.png", dpi=150, bbox_inches='tight')
     plt.close(fig)
 
     # Log the AUC metric explicitly
@@ -900,20 +943,20 @@ with mlflow.start_run():
         # Plot with seaborn
         plt.figure(figsize=(12, 8))
         sns.set_style("whitegrid")
-        ax = sns.barplot(x='Importance', y='Feature', data=importance_df.head(20), palette='viridis')
+        ax = sns.barplot(x='Importance', y='Feature', hue='Feature', legend=False, data=importance_df.head(20), palette='viridis')
         ax.set_title(f'Top 20 Feature Importances - {classifier_type.upper()}', fontsize=16)
         ax.set_xlabel('Importance', fontsize=14)
         ax.set_ylabel('Feature', fontsize=14)
         plt.tight_layout()
-        plt.savefig("feature_importance.png", dpi=300, bbox_inches='tight')
+        plt.savefig(f"{output_dir}/feature_importance.png", dpi=300, bbox_inches='tight')
 
         # Log the figure to MLflow
-        mlflow.log_figure(plt.gcf(), "feature_importance.png")
+        mlflow.log_figure(plt.gcf(), f"{output_dir}/feature_importance.png")
         plt.close()
 
         # Also save the full feature importance DataFrame as CSV
-        importance_df.to_csv("feature_importances.csv", index=False)
-        mlflow.log_artifact("feature_importances.csv")
+        importance_df.to_csv(f"{output_dir}/feature_importances.csv", index=False)
+        mlflow.log_artifact(f"{output_dir}/feature_importances.csv")
 
         print(f"\nTop 10 most important features:")
         print(importance_df.head(10))
@@ -936,15 +979,15 @@ with mlflow.start_run():
         ax.set_xlabel('Absolute Coefficient Value', fontsize=14)
         ax.set_ylabel('Feature', fontsize=14)
         plt.tight_layout()
-        plt.savefig("feature_importance.png", dpi=300, bbox_inches='tight')
+        plt.savefig(f"{output_dir}/feature_importance.png", dpi=300, bbox_inches='tight')
 
         # Log the figure to MLflow
-        mlflow.log_figure(plt.gcf(), "feature_coefficients.png")
+        mlflow.log_figure(plt.gcf(), f"{output_dir}/feature_coefficients.png")
         plt.close()
 
         # Also save the full feature importance DataFrame as CSV
-        importance_df.to_csv("feature_coefficients.csv", index=False)
-        mlflow.log_artifact("feature_coefficients.csv")
+        importance_df.to_csv(f"{output_dir}/feature_coefficients.csv", index=False)
+        mlflow.log_artifact(f"{output_dir}/feature_coefficients.csv")
 
         print(f"\nTop 10 most important features (by coefficient magnitude):")
         print(importance_df.head(10))
@@ -967,15 +1010,15 @@ with mlflow.start_run():
         ax.set_xlabel('Absolute Coefficient Value', fontsize=14)
         ax.set_ylabel('Feature', fontsize=14)
         plt.tight_layout()
-        plt.savefig("feature_importance.png", dpi=300, bbox_inches='tight')
+        plt.savefig(f"{output_dir}/feature_importance.png", dpi=300, bbox_inches='tight')
 
         # Log the figure to MLflow
-        mlflow.log_figure(plt.gcf(), "feature_coefficients.png")
+        mlflow.log_figure(plt.gcf(), f"{output_dir}/feature_coefficients.png")
         plt.close()
 
         # Also save the full feature importance DataFrame as CSV
-        importance_df.to_csv("feature_coefficients.csv", index=False)
-        mlflow.log_artifact("feature_coefficients.csv")
+        importance_df.to_csv(f"{output_dir}/feature_coefficients.csv", index=False)
+        mlflow.log_artifact(f"{output_dir}/feature_coefficients.csv")
 
         print(f"\nTop 10 most important features (by coefficient magnitude):")
         print(importance_df.head(10))
@@ -1008,15 +1051,15 @@ with mlflow.start_run():
             ax.set_xlabel('Mean Importance', fontsize=14)
             ax.set_ylabel('Feature', fontsize=14)
             plt.tight_layout()
-            plt.savefig("permutation_importance.png", dpi=300, bbox_inches='tight')
+            plt.savefig(f"{output_dir}/permutation_importance.png", dpi=300, bbox_inches='tight')
 
             # Log the figure to MLflow
-            mlflow.log_figure(plt.gcf(), "permutation_importance.png")
+            mlflow.log_figure(plt.gcf(), f"{output_dir}/permutation_importance.png")
             plt.close()
 
             # Also save the full feature importance DataFrame as CSV
-            importance_df.to_csv("permutation_importances.csv", index=False)
-            mlflow.log_artifact("permutation_importances.csv")
+            importance_df.to_csv(f"{output_dir}/permutation_importances.csv", index=False)
+            mlflow.log_artifact(f"{output_dir}/permutation_importances.csv")
 
             print(f"\nTop 10 most important features (by permutation importance):")
             print(importance_df.head(10))
@@ -1050,8 +1093,8 @@ with mlflow.start_run():
             ax.set_xlabel("Mean Predicted Probability")
             ax.set_ylabel("Fraction of Positives")
             ax.grid(True)
-            plt.savefig("calibration_curve.png", dpi=150, bbox_inches='tight')
-            mlflow.log_artifact("calibration_curve.png")
+            plt.savefig(f"{output_dir}/calibration_curve.png", dpi=150, bbox_inches='tight')
+            mlflow.log_artifact(f"{output_dir}/calibration_curve.png")
             plt.close(fig)
 
             # Log Brier score
@@ -1083,8 +1126,8 @@ with mlflow.start_run():
             ax.set_xlabel("Mean Scaled Decision Score")
             ax.set_ylabel("Fraction of Positives")
             ax.grid(True)
-            plt.savefig("calibration_curve.png", dpi=150, bbox_inches='tight')
-            mlflow.log_artifact("calibration_curve.png")
+            plt.savefig(f"{output_dir}/calibration_curve.png", dpi=150, bbox_inches='tight')
+            mlflow.log_artifact(f"{output_dir}/calibration_curve.png")
             plt.close(fig)
 
             # Log Brier score
@@ -1128,17 +1171,17 @@ with mlflow.start_run():
                           rounded=True,
                           max_depth=4) # Limit depth for readability - but ideally expand this for the final graph
                 plt.title("Random Forest - First Tree")
-                plt.savefig("decision_tree_1.png", dpi=200, bbox_inches='tight')
-                mlflow.log_artifact("decision_tree_1.png")
+                plt.savefig(f"{output_dir}/decision_tree_1.png", dpi=200, bbox_inches='tight')
+                mlflow.log_artifact(f"{output_dir}/decision_tree_1.png")
                 plt.close()
 
                 # Also export text representation
                 tree_rules = export_text(estimator,
                                          feature_names=list(feature_names),
                                          max_depth=4)
-                with open("tree_rules_1.txt", "w") as f:
+                with open(f"{output_dir}/tree_rules_1.txt", "w") as f:
                     f.write(tree_rules)
-                mlflow.log_artifact("tree_rules_1.txt")
+                mlflow.log_artifact(f"{output_dir}/tree_rules_1.txt")
 
             elif classifier_type == 'gb': #todo check if same sanitising/list format is required as in xgb; if so group in an elif before handling each separately
                 plt.figure(figsize=(25, 15))
@@ -1150,8 +1193,8 @@ with mlflow.start_run():
                           rounded=True,
                           max_depth=4)
                 plt.title("Gradient Boosting - First Tree")
-                plt.savefig("decision_tree_1.png", dpi=200, bbox_inches='tight')
-                mlflow.log_artifact("decision_tree_1.png")
+                plt.savefig(f"{output_dir}/decision_tree_1.png", dpi=200, bbox_inches='tight')
+                mlflow.log_artifact(f"{output_dir}/decision_tree_1.png")
                 plt.close()
 
             elif classifier_type == 'xgb':
@@ -1174,8 +1217,8 @@ with mlflow.start_run():
                 plt.figure(figsize=(25, 15))
                 xgb_plot_tree(clf, tree_idx=0, rankdir='LR')
                 plt.title("XGBoost - First Tree")
-                plt.savefig("decision_tree_1.png", dpi=200, bbox_inches='tight')
-                mlflow.log_artifact("decision_tree_1.png")
+                plt.savefig(f"{output_dir}/decision_tree_1.png", dpi=200, bbox_inches='tight')
+                mlflow.log_artifact(f"{output_dir}/decision_tree_1.png")
                 plt.close()
 
                 # Check size of trees
@@ -1217,7 +1260,7 @@ with mlflow.start_run():
         ax.set_title(f"Precision-Recall Curve (AP = {average_precision:.2f})")
 
         # Save and log
-        plt.savefig("precision_recall_curve.png", dpi=150, bbox_inches='tight')
+        plt.savefig(f"{output_dir}/precision_recall_curve.png", dpi=150, bbox_inches='tight')
         mlflow.log_figure(fig, "precision_recall_curve.png")
         plt.close(fig)
 
@@ -1270,9 +1313,9 @@ with mlflow.start_run():
         plt.legend()
 
         # Save and show
-        plt.savefig("pca_test_before_prediction.png", dpi=200, bbox_inches='tight')
+        plt.savefig(f"{output_dir}/pca_test_before_prediction.png", dpi=200, bbox_inches='tight')
         plt.close()
-        mlflow.log_artifact("pca_test_before_prediction.png")
+        mlflow.log_artifact(f"{output_dir}/pca_test_before_prediction.png")
 
         ### Create a second PCA colour coded by TP/FP/TN/FN
         # Create masks for each outcome type
@@ -1312,9 +1355,9 @@ with mlflow.start_run():
                     bbox={"facecolor": "white", "alpha": 0.8, "pad": 5})
 
         # Save and log
-        plt.savefig("pca_test_prediction_outcomes.png", dpi=200, bbox_inches='tight')
+        plt.savefig(f"{output_dir}/pca_test_prediction_outcomes.png", dpi=200, bbox_inches='tight')
         plt.close()
-        mlflow.log_artifact("pca_test_prediction_outcomes.png")
+        mlflow.log_artifact(f"{output_dir}/pca_test_prediction_outcomes.png")
 
 # Example output:
 # Test accuracy with best model (rf): 0.6000
