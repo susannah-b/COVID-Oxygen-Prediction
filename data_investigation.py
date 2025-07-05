@@ -1,3 +1,8 @@
+### SCRIPT USAGE #######################################################################################################
+# Run this script twice with the required bools (See note on line ~28) to investigate and clean 1. The Surrey data used
+# for training the model, and 2. the ISARIC data used for external validation.
+
+######### SETUP ########################################################################################################
 # Imports
 import pandas as pd
 from pathlib import Path
@@ -27,8 +32,8 @@ sample_inves_8 = False # Numerical conversion
 #    process that dataset accordingly. This means that the script will have to be run twice if validating; once for each dataset.
 #  - the 'validation_compatible' bool is intended for the Surrey dataset when you are planning to calidate with ISARIC;
 #    i.e. it enables some options that are required for the model to be compatible with both datasets
-# IMPROVE: Ideally the script would be split into Surrey vs ISARIC scripts (in isaric can remove extra Surrey columns)
-#  where required).
+# IMPROVE: Ideally the script would be split into Surrey vs ISARIC scripts (in isaric can remove extra columns)
+#  from the Surrey dataset where required).
 
 # Bool to determine whether to make the Surrey (training) data compatible with external validation data (ISARIC)
 validation_compatible = True # Will drop some incompatible columns
@@ -704,7 +709,7 @@ for col in merged.columns:
         numerical_cols.append(col)
     else:
         categorical_cols.append(col)
-sample_inves_8=True
+
 if sample_inves_8:
     print(f"Numerical columns: {numerical_cols}")
     print(f"Categorical columns: {categorical_cols}")
