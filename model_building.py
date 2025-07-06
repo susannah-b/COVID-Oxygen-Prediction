@@ -4,6 +4,12 @@
 # generate a fresh file. The suffix string is optional.
 #   The run_name for MLflow will be produced in the format N_MMDD-HH:MM_[suffix]. Change the suffix to the desired string
 #   to represent the run, e.g. for runs without metadata "no_metadata" may be added.
+#   The suffix will be used as a descriptor for the run in the final output subdirectory, so should be descriptive of the
+#   settings for the model.
+
+# If track_final is enabled, the logged model and graphs will be copied to the model_output subdirectory for perusal,
+# including a file stating the corresponding hyperopt MLflow run name. In the MLflow UI, this hyperopt run will also be added as a
+# tag, and vice vera for the hyperopt trials and the final model run name.
 
 ######### SETUP ########################################################################################################
 import numpy as np
@@ -34,11 +40,16 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 import warnings
-from functions import count_meta, basic_train, IntToFloatTransformer
+from functions import count_meta, basic_train, IntToFloatTransformer, port_in_use, copy_contents
 import re
 import os
 from datetime import datetime
+import subprocess
+import time
+import shutil
 # todo clean up at end
+
+#IMPROVE Break script into smaller parts
 
 # WARNING - suppress MLflow warning and precision warning - fix later
 warnings.filterwarnings("ignore", category=UserWarning, module="mlflow.types.utils")
@@ -326,22 +337,22 @@ basic_training = True
 top_model_scores = {}
 
 # Determine which models to test
-# Logistic_regression = False
-# SVM = False
-# Random_forest = True
-# AdaBoost = False
-# Gradient_boosting = False
-# XGBoost = True
-# KNN = False
+Logistic_regression = False
+SVM = False
+Random_forest = True
+AdaBoost = False
+Gradient_boosting = False
+XGBoost = True
+KNN = False
 
 #  WARNING version with all switched on - delete other after testing:
-Logistic_regression = True
-SVM = True
-Random_forest = True
-AdaBoost = True
-Gradient_boosting = True
-XGBoost = True
-KNN = True
+# Logistic_regression = True
+# SVM = True
+# Random_forest = True
+# AdaBoost = True
+# Gradient_boosting = True
+# XGBoost = True
+# KNN = True
 
 # Dictionary to store the highest performing models and their feature selection methods
 best_models_fs = {}
@@ -459,7 +470,6 @@ def objective(params):
         # Merge base parameters with tuned parameters
         all_params = {**selector_config['base_params'], **fs_params}
         selector = selector_config['class'](**all_params)
-        print(f"Now tuning: {classifier_type} with {selector_type}") #IMPROVE maybe delete this after testing - otherwise it's one print per eval
 
     ### Build the classifier based on provided type and convert parameters that must be integers (hyperopt returns floats) if necessary
     if classifier_type == 'svm':
@@ -493,30 +503,36 @@ def objective(params):
     else:
         return {'loss': 1, 'status': STATUS_OK}
 
-    # Incorporate feature selection into the pipeline
-    pipe = Pipeline([
-        ('int_to_float', IntToFloatTransformer()),
-        ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
-        ('classifier', clf)
-    ])
-    # Incorporate required preprocessing/FS steps and the model
-    pipe = Pipeline([
-        ('preprocessor', Pipeline([
+    # Start MLFlow run for each trial
+    with mlflow.start_run(nested=True):
+        mlflow.set_tag("Corresponding final model", f"{run_name}")  # Can find the name of the trained model using this tag
+        # Log trial hyperparameters
+        mlflow.log_params({**params, "type": classifier_type, **{"fs_" + k: v for k, v in fs_params.items()}})
+
+        # Incorporate feature selection into the pipeline
+        pipe = Pipeline([
             ('int_to_float', IntToFloatTransformer()),
-            ('var_thresh', VarianceThreshold(threshold=threshold)),
-            ('scaler', StandardScaler())
-        ])),
-        ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
-        ('classifier', clf)
-    ])
+            ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
+            ('classifier', clf)
+        ])
+        # Incorporate required preprocessing/FS steps and the model
+        pipe = Pipeline([
+            ('preprocessor', Pipeline([
+                ('int_to_float', IntToFloatTransformer()),
+                ('var_thresh', VarianceThreshold(threshold=threshold)),
+                ('scaler', StandardScaler())
+            ])),
+            ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
+            ('classifier', clf)
+        ])
 
-    # Use 10-fold cross validation to compute the mean accuracy
-    f1_score_mean = cross_val_score(pipe, X_train, y_train, cv=StratifiedKFold(5, shuffle=True, random_state=42), scoring='f1').mean()  # Reduced to 5-fold for speed
+        # Use 10-fold cross validation to compute the mean accuracy
+        f1_score_mean = cross_val_score(pipe, X_train, y_train, cv=StratifiedKFold(5, shuffle=True, random_state=42), scoring='f1').mean()  # Reduced to 5-fold for speed
 
-    # Log the best accuracy for each model type if improved
-    if f1_score_mean > best_f1[classifier_type]:
-        best_f1[classifier_type] = f1_score_mean
-        mlflow.log_metric(f"best_{classifier_type}_F1", f1_score_mean)
+        # Log the best accuracy for each model type if improved
+        if f1_score_mean > best_f1[classifier_type]:
+            best_f1[classifier_type] = f1_score_mean
+            mlflow.log_metric(f"best_{classifier_type}_F1", f1_score_mean)
 
     # Because fmin() tries to minimize the objective, this function must return the negative accuracy.
     return {'loss': -f1_score_mean, 'status': STATUS_OK}
@@ -667,34 +683,31 @@ if type_translation['knn'] in best_models_fs:
 # Define the search space over hyperparameters (for classifier only; feature selection is determined elsehwere)
 search_space = hp.choice('classifier_type', best_spaces)
 
-### HYPEROPT TUNING WITH MLFLOW ########################################################################################
-print("\nNow tuning hyperparameters\n")
+### MLFLOW TRACKING ####################################################################################################
+# Make folder for tracking runs
+os.makedirs('./ml_runs', exist_ok=True)
 
-with mlflow.start_run():
-    best_result = fmin(
-        fn=objective,
-        space=search_space,
-        algo=tpe.suggest,
-        max_evals=500, #todo: increase on a better machine
-        trials=Trials()
-    )
+# Start local tracking server
+host = "127.0.0.1"
+port = 8080
 
-# Print the best accuracies for each model type
-print("\nHighest model accuracies on train data:")
-best_f1_df = pd.DataFrame(list(best_f1.items()), columns=['Models', 'Highest F1'])
-print(best_f1_df)
+mlflow_proc = None # Store Popen proces
+if not port_in_use(host, port):
+    print(f"Running tracking server on {host}:{port}")
+    mlflow_proc = subprocess.Popen(["mlflow", "server", "--backend-store-uri", "./ml_runs", "--host", host, "--port", f"{port}"])
+else:
+    print(f"MLflow tracking server already listening on {host}:{port}")
 
-# Extract and print the best hyperparameter configuration
-best_config = space_eval(search_space, best_result)
-print("\nBest model configuration:")
-best_config_df = pd.DataFrame(list(best_config.items()), columns=['Parameters', 'Values'])
-print(best_config_df)
+# Pause to allow the server to boot up
+    time.sleep(5)
+
+# Set MLFLow tracking URI
+mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 
 ### CREATE RUN ID ######################################################################################################
-# Note: Not actually very helpful - I set thinking this was the run name but is actually immutable. Left it in anyway as it
-# may be useful later on.
 config_path = Path("run_name_config.txt") # Path to file
 run_name = None # Initialise
+hyperopt_name = None
 
 if not os.path.exists(config_path):
     # If config file doesn't exist, create a 'blank' one
@@ -711,20 +724,63 @@ else:
         # Set ID info
         run_number = int(match.group(1))
         suffix = match.group(3)
-        timestamp = datetime.now().strftime("%m%d-%H:%M")
+        timestamp = datetime.now().strftime("%m%d-%H%M")
+        # Set run name for final model
         run_name = f"{run_number}_{timestamp}"
-        if suffix:
-            run_name = f"{run_name}_{suffix}"
+        if not suffix:
+            suffix = "Unspecified" # If no description of the model run has been set in config, then just tag as unspecified
+        run_name = f"{run_name}_{suffix}"
+        # Set run name for hyperopt
+        hyperopt_name = f"{run_number}_hyperopt_{timestamp}_{suffix}"
     # Increase the run_name by one for the next run
     with open(config_path, "w") as f:
         f.write(f"{run_number + 1} \"{suffix}\"")
 
+### HYPEROPT TUNING WITH MLFLOW ########################################################################################
+print("\nNow tuning hyperparameters\n")
+store_hyp_id = None # Call this later to print the ID at the end
+hyper_run_id = None
+
+mlflow.set_experiment("Oxygen Prediction - Hyperparams") # Note: Could use same experiment ID as the final model in order to compare; for now I find it easier to keep them separate.
+with mlflow.start_run(run_name=hyperopt_name) as run:
+    mlflow.set_tag("Phase", "Hyperopt parameter tuning")
+    best_result = fmin(
+        fn=objective,
+        space=search_space,
+        algo=tpe.suggest,
+        max_evals=50, #todo: increase on a better machine # IMPROVE this and other settings could be set using a config file
+        trials=Trials()
+    )
+    # Print run id
+    hyper_run_id = run.info.run_id
+    store_hyp_id = f"Run {run_name} for hyperparameter training completed. Run ID is {hyper_run_id}. See nested runs for individual trials"
+
+# Print the best accuracies for each model type
+print("\nHighest model accuracies on train data:")
+best_f1_df = pd.DataFrame(list(best_f1.items()), columns=['Models', 'Highest F1'])
+print(best_f1_df)
+
+# Extract and print the best hyperparameter configuration
+best_config = space_eval(search_space, best_result)
+print("\nBest model configuration:")
+best_config_df = pd.DataFrame(list(best_config.items()), columns=['Parameters', 'Values'])
+print(best_config_df)
+
 ### TRAIN FINAL MODEL ##################################################################################################
+# Create a new MLflow Experiment
+mlflow.set_experiment("Oxygen Prediction - Surrey")
+
 # Train final model using the full training data
-mlflow.sklearn.autolog() # TODO have an option to set a run name
+mlflow.sklearn.autolog()
+store_final_id = None # Initialise value to store run ID to print at end
+final_run_id = None
+final_exp_id = None
 with mlflow.start_run(run_name=run_name) as run:
-    mlflow.set_tag("custom_run_name", run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
+    mlflow.set_tag("Run name", run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
+    mlflow.set_tag("Phase", "Final model training")
+    mlflow.set_tag("Hyperopt MLflow run", hyperopt_name)
     mlflow.log_param("mlflow_run_name", run.info.run_name)
+    final_exp_id = run.info.experiment_id # Get experiment id for folder management
     # Extract the best classifier type
     classifier_type = best_config['type']
 
@@ -883,8 +939,6 @@ with mlflow.start_run(run_name=run_name) as run:
         # Save and show
         plt.savefig(f"{graphs_dir}/pca_full_dataset_after_FS.png", dpi=150, bbox_inches='tight')
         plt.close()
-        mlflow.log_artifact(f"{graphs_dir}/pca_full_dataset_after_FS.png")
-
     ### Plot learning curve
     # Compute scores at varying training sizes
     train_sizes, train_scores, val_scores = learning_curve(
@@ -960,7 +1014,6 @@ with mlflow.start_run(run_name=run_name) as run:
 
         # Also save the full feature importance DataFrame as CSV
         importance_df.to_csv(f"{data_dir}/feature_importances.csv", index=False)
-        mlflow.log_artifact(f"{data_dir}/feature_importances.csv")
 
         print(f"\nTop 10 most important features:")
         print(importance_df.head(10))
@@ -991,7 +1044,6 @@ with mlflow.start_run(run_name=run_name) as run:
 
         # Also save the full feature importance DataFrame as CSV
         importance_df.to_csv(f"{data_dir}/feature_coefficients.csv", index=False)
-        mlflow.log_artifact(f"{data_dir}/feature_coefficients.csv")
 
         print(f"\nTop 10 most important features (by coefficient magnitude):")
         print(importance_df.head(10))
@@ -1022,7 +1074,6 @@ with mlflow.start_run(run_name=run_name) as run:
 
         # Also save the full feature importance DataFrame as CSV
         importance_df.to_csv(f"{data_dir}/feature_coefficients.csv", index=False)
-        mlflow.log_artifact(f"{data_dir}/feature_coefficients.csv")
 
         print(f"\nTop 10 most important features (by coefficient magnitude):")
         print(importance_df.head(10))
@@ -1063,7 +1114,6 @@ with mlflow.start_run(run_name=run_name) as run:
 
             # Also save the full feature importance DataFrame as CSV
             importance_df.to_csv(f"{data_dir}/permutation_importances.csv", index=False)
-            mlflow.log_artifact(f"{data_dir}/permutation_importances.csv")
 
             print(f"\nTop 10 most important features (by permutation importance):")
             print(importance_df.head(10))
@@ -1098,7 +1148,6 @@ with mlflow.start_run(run_name=run_name) as run:
             ax.set_ylabel("Fraction of Positives")
             ax.grid(True)
             plt.savefig(f"{graphs_dir}/calibration_curve.png", dpi=150, bbox_inches='tight')
-            mlflow.log_artifact(f"{graphs_dir}/calibration_curve.png")
             plt.close(fig)
 
             # Log Brier score
@@ -1131,7 +1180,6 @@ with mlflow.start_run(run_name=run_name) as run:
             ax.set_ylabel("Fraction of Positives")
             ax.grid(True)
             plt.savefig(f"{graphs_dir}/calibration_curve.png", dpi=150, bbox_inches='tight')
-            mlflow.log_artifact(f"{graphs_dir}/calibration_curve.png")
             plt.close(fig)
 
             # Log Brier score
@@ -1145,7 +1193,7 @@ with mlflow.start_run(run_name=run_name) as run:
         print(f"Error generating calibration curve: {str(e)}")
 
     ### Plot decision tree
-    class_names = np.array(['No_Oxygen_Need', 'Oxygen_Need'])  # Replace with your class names
+    class_names = np.array(['No_Oxygen_Need', 'Oxygen_Need'])
 
     ### Plot decision tree for tree-based models #TODO: Basic version - when a final best model is obtained this graph can be fine tuned if useful for the final report
     if classifier_type in ['rf', 'gb', 'xgb']: #TODO untested for gb - and could use refinement of outputs
@@ -1176,7 +1224,6 @@ with mlflow.start_run(run_name=run_name) as run:
                           max_depth=4) # Limit depth for readability - but ideally expand this for the final graph
                 plt.title("Random Forest - First Tree")
                 plt.savefig(f"{graphs_dir}/decision_tree_1.png", dpi=200, bbox_inches='tight')
-                mlflow.log_artifact(f"{graphs_dir}/decision_tree_1.png")
                 plt.close()
 
                 # Also export text representation
@@ -1185,7 +1232,6 @@ with mlflow.start_run(run_name=run_name) as run:
                                          max_depth=4)
                 with open(f"{data_dir}/tree_rules_1.txt", "w") as f:
                     f.write(tree_rules)
-                mlflow.log_artifact(f"{data_dir}/tree_rules_1.txt")
 
             elif classifier_type == 'gb': #todo check if same sanitising/list format is required as in xgb; if so group in an elif before handling each separately
                 plt.figure(figsize=(25, 15))
@@ -1198,7 +1244,6 @@ with mlflow.start_run(run_name=run_name) as run:
                           max_depth=4)
                 plt.title("Gradient Boosting - First Tree")
                 plt.savefig(f"{graphs_dir}/decision_tree_1.png", dpi=200, bbox_inches='tight')
-                mlflow.log_artifact(f"{graphs_dir}/decision_tree_1.png")
                 plt.close()
 
             elif classifier_type == 'xgb':
@@ -1222,7 +1267,6 @@ with mlflow.start_run(run_name=run_name) as run:
                 xgb_plot_tree(clf, tree_idx=0, rankdir='LR')
                 plt.title("XGBoost - First Tree")
                 plt.savefig(f"{graphs_dir}/decision_tree_1.png", dpi=200, bbox_inches='tight')
-                mlflow.log_artifact(f"{graphs_dir}/decision_tree_1.png")
                 plt.close()
 
                 # Check size of trees
@@ -1276,7 +1320,7 @@ with mlflow.start_run(run_name=run_name) as run:
         print(f"Error generating Precision-Recall curve: {str(e)}")
 
     ### Plot PCA on final predictions - Test data
-    with mlflow.start_run(nested=True):  # Start another run to avoid auologging conflicts
+    with mlflow.start_run(nested=True):  # Start another run to avoid autologging conflicts
         mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
         # Select the features determined by feature selection
         X_selected = X_test[selected_features]
@@ -1319,7 +1363,6 @@ with mlflow.start_run(run_name=run_name) as run:
         # Save and show
         plt.savefig(f"{graphs_dir}/pca_test_before_prediction.png", dpi=200, bbox_inches='tight')
         plt.close()
-        mlflow.log_artifact(f"{graphs_dir}/pca_test_before_prediction.png")
 
         ### Create a second PCA colour coded by TP/FP/TN/FN
         # Create masks for each outcome type
@@ -1361,7 +1404,49 @@ with mlflow.start_run(run_name=run_name) as run:
         # Save and log
         plt.savefig(f"{graphs_dir}/pca_test_prediction_outcomes.png", dpi=200, bbox_inches='tight')
         plt.close()
-        mlflow.log_artifact(f"{graphs_dir}/pca_test_prediction_outcomes.png")
+
+    # Print run id
+    final_run_id = run.info.run_id
+    store_final_id = f"Run {run_name} for final model completed. Run ID is {final_run_id}"
+
+    # Log artifacts
+    mlflow.log_artifacts(graphs_dir, artifact_path="graphs")
+    mlflow.log_artifacts(data_dir, artifact_path="tables")
+
+### STORE RESULTS IN NEW FOLDER ########################################################################################
+# Move and rename runs to a new directory for easier examination - results are copied from the MLflow tracking folder
+# (which is also available in the server) but renamed here for easier access based on the suffix defined in the config
+# file.
+# Bool to set whether to copy the runs to the final output subdirectory - for testing only this can be disabled
+track_final = True #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful
+if track_final:
+    print("\'track_final\' has been enabled, so the model information will be copied to ./model_output for easier viewing.")
+    # Make folder for the outputs
+    os.makedirs('./model_output', exist_ok=True)
+
+    # Determine file locations
+    final_folder = Path(f"./ml_runs/{final_exp_id}/{final_run_id}")
+    output_folder = Path(f"./model_output/{run_name}")
+    graph_folder = Path(f"./{graphs_dir}")
+    data_folder = Path(f"./{data_dir}")
+
+    # Copy final model folder contents
+    copy_contents(final_folder, output_folder)
+    # Copy training data and graphs folder
+    shutil.copytree(data_folder, output_folder, dirs_exist_ok=True)
+    shutil.copytree(graph_folder, output_folder, dirs_exist_ok=True)
+    # Note: the mlartifacts folder is skipped; I don't think there's anything new that's useful. Also - might be for PCA runs not final runs? Not sure.
+
+    # Make note of the corresponding hyperopt MLflow run
+    hyper_run_file = final_folder / "hyperopt_run_name.txt"
+    hyper_run_file.write_text(f"{hyperopt_name}")
+
+# Print run ids
+print(store_hyp_id)
+print(store_final_id)
+
+# WARNING: If getting the 'too many 500 error responses' warning due to deleting files, run 'kill $(lsof -t -i tcp:8080)' in the terminal
+
 
 # Example output:
 # Test accuracy with best model (rf): 0.6000

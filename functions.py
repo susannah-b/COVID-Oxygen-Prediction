@@ -5,10 +5,8 @@ from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.preprocessing import StandardScaler
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.decomposition import PCA
-import mlflow
-import mlflow.sklearn
-import matplotlib.pyplot as plt
+import socket
+import shutil
 
 # Detect metadata columns in the dataset
 def count_meta(dataset, name, metadata_features, drop, show_detail):
@@ -97,3 +95,17 @@ class IntToFloatTransformer(BaseEstimator, TransformerMixin):
             int_cols = X.select_dtypes(include=['int', 'int32', 'int64']).columns
             X[int_cols] = X[int_cols].astype(float)
         return X
+
+# Check if port is in use for MLFlow
+def port_in_use(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex((host, port)) == 0
+
+# Copy folder contents
+def copy_contents(source, destination):
+    for item in source.iterdir():
+        dest_path = destination / item.name
+        if item.is_dir():
+            shutil.copytree(item, dest_path, dirs_exist_ok=True)
+        else:
+            shutil.copy2(item, dest_path)
