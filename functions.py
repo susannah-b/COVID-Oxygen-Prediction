@@ -7,6 +7,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.base import BaseEstimator, TransformerMixin
 import socket
 import shutil
+import os
 
 # Detect metadata columns in the dataset
 def count_meta(dataset, name, metadata_features, drop, show_detail):
@@ -103,6 +104,8 @@ def port_in_use(host: str, port: int) -> bool:
 
 # Copy folder contents
 def copy_contents(source, destination):
+    # Make folder for the outputs
+    os.makedirs(destination, exist_ok=True)
     for item in source.iterdir():
         dest_path = destination / item.name
         if item.is_dir():

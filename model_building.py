@@ -47,6 +47,8 @@ from datetime import datetime
 import subprocess
 import time
 import shutil
+import json
+import joblib
 # todo clean up at end
 
 #IMPROVE Break script into smaller parts
@@ -64,26 +66,26 @@ show_detail = False
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 180)
 
-### Read in data
-# Train
-X_path = Path(__file__).parent / "Surrey_X_train.csv"
-y_path = Path(__file__).parent / "Surrey_y_train.csv"
-X_train = pd.read_csv(X_path, index_col=0)
-y_train = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
-# Test
-X_path = Path(__file__).parent / "Surrey_X_test.csv"
-y_path = Path(__file__).parent / "Surrey_y_test.csv"
-X_test = pd.read_csv(X_path, index_col=0)
-y_test = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
-# Set pandas to display all columns
-pd.set_option('display.max_columns', None)
-
 # Create output directory for the data
 data_dir = 'training_data'
 os.makedirs(data_dir, exist_ok=True)
 # Create graphs directory for the data
 graphs_dir = 'training_graphs'
 os.makedirs(graphs_dir, exist_ok=True)
+
+### Read in data
+# Train
+X_path = Path(__file__).parent / data_dir / "Surrey_X_train.csv"
+y_path = Path(__file__).parent / data_dir / "Surrey_y_train.csv"
+X_train = pd.read_csv(X_path, index_col=0)
+y_train = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
+# Test
+X_path = Path(__file__).parent / data_dir / "Surrey_X_test.csv"
+y_path = Path(__file__).parent / data_dir / "Surrey_y_test.csv"
+X_test = pd.read_csv(X_path, index_col=0)
+y_test = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
+# Set pandas to display all columns
+pd.set_option('display.max_columns', None)
 
 # TODO: Note that some isaric columns were selected that might be innaccurate (eg day 1 x ray infiltrates as analogous to Bilateral CXR changes
 #  in Surrey data. It would be worth experimenting with dropping some of these here to see if the model improves (although if not feature-selected
@@ -685,16 +687,15 @@ search_space = hp.choice('classifier_type', best_spaces)
 
 ### MLFLOW TRACKING ####################################################################################################
 # Make folder for tracking runs
-os.makedirs('./ml_runs', exist_ok=True)
+os.makedirs('./mlruns', exist_ok=True)
 
 # Start local tracking server
 host = "127.0.0.1"
 port = 8080
 
-mlflow_proc = None # Store Popen proces
 if not port_in_use(host, port):
     print(f"Running tracking server on {host}:{port}")
-    mlflow_proc = subprocess.Popen(["mlflow", "server", "--backend-store-uri", "./ml_runs", "--host", host, "--port", f"{port}"])
+    subprocess.Popen(["mlflow", "server", "--backend-store-uri", "./mlruns", "--host", host, "--port", f"{port}"])
 else:
     print(f"MLflow tracking server already listening on {host}:{port}")
 
@@ -748,7 +749,7 @@ with mlflow.start_run(run_name=hyperopt_name) as run:
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=50, #todo: increase on a better machine # IMPROVE this and other settings could be set using a config file
+        max_evals=80, #todo: increase on a better machine # IMPROVE this and other settings/bools could be set using a config file
         trials=Trials()
     )
     # Print run id
@@ -875,6 +876,11 @@ with mlflow.start_run(run_name=run_name) as run:
         print(selected_features)
     except Exception as e:
         print(f"Unable to print features for this feature selection method: {str(e)}")
+
+    # Save features for validation - JSON (human-readable) and joblib
+    with open(f"{data_dir}/selected_features.json", "w") as f:
+        json.dump(selected_features, f)
+    joblib.dump(selected_features, f"{data_dir}/selected_features.joblib")
 
     ### Log the final pipeline model
     # Create input example
@@ -1421,21 +1427,23 @@ with mlflow.start_run(run_name=run_name) as run:
 track_final = True #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful
 if track_final:
     print("\'track_final\' has been enabled, so the model information will be copied to ./model_output for easier viewing.")
-    # Make folder for the outputs
-    os.makedirs('./model_output', exist_ok=True)
 
     # Determine file locations
-    final_folder = Path(f"./ml_runs/{final_exp_id}/{final_run_id}")
-    output_folder = Path(f"./model_output/{run_name}")
-    graph_folder = Path(f"./{graphs_dir}")
-    data_folder = Path(f"./{data_dir}")
+    final_folder = Path("mlruns") / final_exp_id / final_run_id
+    ml_artifacts = Path("mlartifacts") / final_exp_id / final_run_id
+    output_folder = Path("model_output") / run_name
+    output_artifacts = output_folder
+    data_folder = Path(data_dir)
+    graph_folder = Path(graphs_dir)
 
     # Copy final model folder contents
-    copy_contents(final_folder, output_folder)
+    shutil.copytree(final_folder, output_folder, dirs_exist_ok=True)
+    # Copy final model artifacts from mlartifacts to the model_output model file
+    #  Note: since setting an experiment name changes the artifacts location to mlartifacts instead of in the mlruns (run) folder, we will copy it over for our final output
+    shutil.copytree(ml_artifacts, output_artifacts, dirs_exist_ok=True)
     # Copy training data and graphs folder
-    shutil.copytree(data_folder, output_folder, dirs_exist_ok=True)
-    shutil.copytree(graph_folder, output_folder, dirs_exist_ok=True)
-    # Note: the mlartifacts folder is skipped; I don't think there's anything new that's useful. Also - might be for PCA runs not final runs? Not sure.
+    shutil.copytree(data_folder, output_folder / data_dir, dirs_exist_ok=True)
+    shutil.copytree(graph_folder, output_folder / graphs_dir, dirs_exist_ok=True)
 
     # Make note of the corresponding hyperopt MLflow run
     hyper_run_file = final_folder / "hyperopt_run_name.txt"
@@ -1457,3 +1465,7 @@ print(store_final_id)
 #  Could also do an ensemble model approach for the final training, and stacking/voting
 
 # IMPROVE once final model is obtained, I'll likely want to plot more model-specific graphs
+
+# TODO early stopping?
+
+#todo extrapolate graphs into functions or class and apply to model building and validation
