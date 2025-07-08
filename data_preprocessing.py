@@ -1,6 +1,6 @@
 ### SCRIPT USAGE #######################################################################################################
 # Run this script twice to perform necessary preprocessing steps on the cleaned Surrey and ISARIC data produced by
-# data_investigation.py. Enable/disable the validation bool as needed for each dataset.
+# feature_engineering.py. Enable/disable the validation bool as needed for each dataset.
 
 ######### SETUP ########################################################################################################
 # Import libraries
@@ -13,7 +13,7 @@ import missingno as msno
 import miceforest as mf
 from pandas import Categorical
 from sklearn.preprocessing import LabelEncoder
-from data_investigation import isaric_cols #IMPROVE instead save to .txt and read in so the other script isn't re-run
+from feature_engineering import isaric_cols #IMPROVE instead save to .txt and read in so the other script isn't re-run
 import os
 # TODO delete any unused at end
 
@@ -21,7 +21,7 @@ import os
 
 # WARNING untested for validate False after some changes to the file structure
 
-# IMPROVE: Ideally (as with data_investigation.py) the script would be split into functions in order to run for each dataset, vs current if/else style
+# IMPROVE: Ideally (as with feature_engineering.py) the script would be split into functions in order to run for each dataset, vs current if/else style
 
 # Set pandas to display all columns
 pd.set_option('display.max_columns', None)

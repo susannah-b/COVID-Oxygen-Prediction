@@ -19,8 +19,256 @@ import mlflow.sklearn
 import matplotlib.pyplot as plt
 import seaborn as sns
 import re
+import missingno as msno
 
-### MODEL BUILDING FUNCTIONS ###########################################################################################
+### FEATURE ENGINEERING.PY #############################################################################################
+# Check for abnormal SIDs in the data; any unexpected lengths
+def check_abnormal_SIDs(quant_samples, before_samples, samples, expected_length):
+    # Get the samples before and after processing, filtered to the Surrey samples only
+    before_samples = before_samples[samples.isin(quant_samples.index)]
+    samples = samples[samples.isin(quant_samples.index)]
+
+    # Compare SIDs before and after
+    comparison_quant = pd.DataFrame({
+        "SID before": before_samples,
+        "Length before": before_samples.astype(str).str.len(),
+        "SID after": samples,
+        "Length after": samples.astype(str).str.len(),
+    })
+    print("Surrey samples before and after processing:\n", comparison_quant.head())
+
+    # Examine the changes made
+    print("Value counts before processing:", comparison_quant["Length before"].value_counts())
+    print("Value counts after processing:", comparison_quant["Length after"].value_counts())
+    print("Abnormal SIDs in quant data:")
+    print(comparison_quant[comparison_quant["Length after"] != expected_length])
+    abnormal_quant_SIDs = quant_samples[quant_samples.index.astype(str).str.len() != expected_length].iloc[:, 0:5]
+    print("\nThe abnormal rows in the quant data file:\n", abnormal_quant_SIDs)
+
+# Calculate unique samples IDs and detect overlaps between the SIDs
+def calculate_overlaps(quant_samples, sample_index, sample_inves_3):
+    quant_samples_set = set(quant_samples) # WARNING: Removed the .index - check this still works
+    meta_samples_modified = set(sample_index)
+    sample_overlap_quant = quant_samples_set & meta_samples_modified
+    quant_unique = quant_samples_set - meta_samples_modified
+    s_meta_unique_quant = meta_samples_modified - quant_samples_set
+    # Print results if enabled
+    if sample_inves_3:
+        print("Number of overlapping samples with quant:", len(sample_overlap_quant))
+        print("Number only in quant samples:", len(quant_unique))
+        print("Number only in s_meta_modified samples:", len(s_meta_unique_quant))
+
+    # Optional for testing:
+    # print("\nWhat are the actual sample values?")
+    # print("Overlapping samples with quant:\n", sample_overlap_quant)
+    # print("\n\nQuant unique samples:\n", quant_unique)
+    # print("\n\nMetadata modified unique samples:\n", s_meta_unique_quant)
+
+# Print column value_counts and uniques for either one column or optionally all
+def check_columns(merged, meta_cols, removed_cols, check_only_one, selected_column, check_set):
+    # Assign which columns to check
+    columns_to_check = [feature for feature in merged.columns[0:meta_cols] if feature not in removed_cols]
+    if check_only_one:
+        columns_to_check = selected_column
+
+    if check_set:
+        for column in columns_to_check:  # To check only one at a time for easier interpretation, change check_only_one to 'True' and edit the variable to the col title as needed.
+            print("\nValue counts:\n", merged[column].value_counts())
+            print("Uniques:\n", merged[column].unique())
+    return columns_to_check
+
+# View columns with no data and NA headers
+def check_empty_cols(merged, dataset, status):
+    print(f"Number of columns in {dataset} {status} removing empty columns:")
+    print(len(merged.columns))
+    dupe_cols = merged.columns[merged.columns.isnull() | (merged.columns == "")]
+    print(f"Number of duplicated columns in {dataset} {status} removing empty columns:")
+    print(len(dupe_cols))
+    if len(dupe_cols) > 0:
+        print("Duplicate cols:", dupe_cols.tolist())
+
+def plot_row_missingness(merged, meta_cols, sample_inves_7, graphs_dir, dataset):
+    # Summarise missing values before removing rows
+    merged_null_before = merged.isnull().sum().to_frame(name='Missing_Count_Before')
+    merged_null_before['Missing_Percentage_Before'] = (merged_null_before['Missing_Count_Before'] / len(merged)) * 100
+
+    ### Examine missingness across rows
+    # NOTE: Previously I filtered out highly missing rows. I no longer do this as the quant data can still be useful, but the plot is left here for investigative purposes.
+    # Calculate NA counts per row for selected metadata columns
+    row_na_counts = merged.iloc[:, :meta_cols].isna().sum(axis=1)
+    missing_distribution = (
+        row_na_counts.value_counts()
+        .sort_index()
+        .reset_index(name='Rows')
+        .rename(columns={'index': 'NA_Count'})
+    )
+    # Calculate percentages
+    missing_distribution['Percentage'] = (missing_distribution['Rows'] / len(merged) * 100).round(2)
+    if sample_inves_7:
+        print(f"Missing values distribution in the {dataset} metadata:")
+        print(missing_distribution.to_string(index=False))
+
+    ### Plot missingness
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x='NA_Count', y='Rows', data=missing_distribution, palette='Blues_d', edgecolor='black', hue='NA_Count',
+                legend=False)
+    plt.title('Missing Values in the Metadata')
+    plt.xlabel('Number of Missing values per samples')
+    plt.ylabel('Number of samples')
+    # Add percentage labels
+    for index, row in missing_distribution.iterrows():
+        plt.text(row.name, row.Rows + 1,  # Offset above bar
+                 f'{row.Percentage}%', ha='center')
+    plt.tight_layout()
+    plt.savefig(f'{graphs_dir}/missing_distribution_{dataset}.png', dpi=300)
+    return merged_null_before
+
+    # IMPROVE plot for quant data as well?
+
+# Plot missingness in columns
+def plot_missingness_msno(merged, dataset, meta_cols, graphs_dir):
+    fig = msno.matrix(merged)
+    fig_copy = fig.get_figure()
+    fig_copy.savefig(f'{graphs_dir}/Missingness_All-data_before_filtering_{dataset}.png', bbox_inches='tight')
+    # Plot missingness of the metadata
+    fig = msno.matrix(merged.iloc[:, 0:meta_cols])
+    fig_copy = fig.get_figure()
+    fig_copy.savefig(f'{graphs_dir}/Missingness_All-metadata_before_filtering_{dataset}.png', bbox_inches='tight')
+    # Plot missingness of the quant data
+    fig = msno.matrix(merged.iloc[:, meta_cols:])
+    fig_copy = fig.get_figure()
+    fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_before_filtering_{dataset}.png', bbox_inches='tight')
+
+# Investigate null values in each column
+def investigate_null(merged, dataset, merged_null_before, sample_inves_7, output_dir):
+    if sample_inves_7:
+        print(f"{dataset} missing count per column:")
+        print(merged.isnull().sum(), "\n")
+        print("Column count before filtering for missing data:")
+        print(len(merged.columns))
+
+        # Extract missingness of below 30% and keep those columns
+
+
+    merged_low_missing = merged_null_before[merged_null_before['Missing_Percentage_Before'] < 30].index.tolist()
+    merged = merged[merged_low_missing]
+    merged.to_csv(f"{output_dir}/Surrey_data_low_missing.csv")
+
+    if sample_inves_7:
+        print("\nColumn count after filtering for missing data:")
+        print(len(merged.columns))
+
+    # Summarise missing values in columns after filtering
+    merged_null_after = merged.isnull().sum().to_frame(name='Missing_Count_After')
+    merged_null_after['Missing_Percentage_After'] = (merged_null_after['Missing_Count_After'] / len(merged)) * 100
+
+    # Combine the information on missingness data before and after column filtering
+    merged_null_summary = pd.concat([merged_null_before, merged_null_after], axis=1, sort=False).fillna('[Column removed]')
+
+    # Save missingness info before and after filtering to csv
+    merged_null_summary.to_csv(f"{output_dir}/Missing_values_comparison_{dataset}.csv",
+                               header=["NA Count Before", "Missingness (%) Before", "NA Count After",
+                                       "Missingness (%) After"],
+                               float_format="%.1f")
+    return merged
+
+# Determine remaining metadata columns and plot with missingno # IMPROVE - think same logic is used elsewhere - could apply function
+def remaining_meta(meta_columns, merged, sample_inves_7, graphs_dir):
+    # Determine remaining columns
+    existing_columns = merged.columns.tolist()
+    # Work backwards through the list to find the first one still present
+    meta_cols = 0  # Initialise
+    for col in reversed(meta_columns):
+        if col in existing_columns:
+            if sample_inves_7:
+                print("\nRemaining metadata columns:")
+                print(merged.columns.get_loc(
+                    col) + 1)  # +1 for 1-based indexing conversion / allows for splicing where the first number is inclusive and the second exclusive
+            meta_cols = merged.columns.get_loc(col) + 1
+            break
+    else:
+        if sample_inves_7:
+            print("All metadata columns were removed by the missingness filter.")
+        meta_cols = 0
+
+    # Plot missingness after filtering (full dataset)
+    fig = msno.matrix(merged)
+    fig_copy = fig.get_figure()
+    fig_copy.savefig(f'{graphs_dir}/Missingness_All-data_after_filtering.png', bbox_inches='tight')
+    # Plot missingness of the metadata
+    fig = msno.matrix(merged.iloc[:, 0:meta_cols])
+    fig_copy = fig.get_figure()
+    fig_copy.savefig(f'{graphs_dir}/Missingness_All-metadata_after_filtering.png', bbox_inches='tight')
+    # Plot missingness of the quant data
+    fig = msno.matrix(merged.iloc[:, meta_cols:])  # Note: This is currently 546-27=519 MS data columns
+    fig_copy = fig.get_figure()
+    fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_after_filtering.png', bbox_inches='tight')
+
+# Categorise as numerical or categorical
+def categorise_cols(merged, sample_inves_8):
+    numerical_cols = []
+    categorical_cols = []
+
+    # Categorise as numeric or categorical based on conversion
+    for col in merged.columns:
+        # Check if column contains numbers (after dropping NaNs)
+        non_na_values = merged[col].dropna()
+        # Try to convert to numeric, if successful it's numerical
+        if pd.api.types.is_numeric_dtype(non_na_values) or pd.to_numeric(non_na_values, errors='coerce').notna().any():
+            numerical_cols.append(col)
+        else:
+            categorical_cols.append(col)
+
+    if sample_inves_8:
+        print(f"Numerical columns: {numerical_cols}")
+        print(f"Categorical columns: {categorical_cols}")
+
+        print(f"\nNumerical columns: {len(numerical_cols)}")
+        print(f"Categorical columns: {len(categorical_cols)}")
+    return numerical_cols, categorical_cols
+
+# Check if any numerical columns had values converted to NaN
+def numerical_check_nan(merged, numerical_cols, categorical_cols, sample_inves_8, dataset):
+    # Build a dict of pre‑conversion NaN counts
+    pre_missing = {col: merged[col].isna().sum() for col in numerical_cols}
+
+    # Convert to numerical or categorical
+    for col in numerical_cols:
+        # Remove commas (thousands separators) if present
+        cleaned = merged[col].astype(str).str.replace(',', '')
+        # Convert to numeric, forcing non‐parseable entries to NaN
+        merged[col] = pd.to_numeric(cleaned, errors='coerce')
+    for col in categorical_cols:
+        merged[col] = merged[col].astype('category')
+
+    # Build a dict of post‐conversion NaN counts
+    post_missing = {col: merged[col].isna().sum() for col in numerical_cols}
+
+    # Compare and report any increases
+    cols_nanned = 0
+    for col in numerical_cols:
+        before = pre_missing[col]
+        after = post_missing[col]
+        if after > before:  # Note this shows regardless of show_inves or not
+            print(f"Column {col!r} gained {after - before} new NaN(s) (was {before}, now {after})")
+            print("Investigate with .unique/.value_counts or similar to compare.")
+            cols_nanned += 1
+
+    if sample_inves_8:
+        if cols_nanned == 0:
+            print(f"\nNone of the {dataset} columns had any real values converted to NaN.")
+
+# Plot class distribution in the dataset
+def plot_class_distribution(merged, graphs_dir, dataset):
+    plt.figure(figsize=(10, 6))
+    sns.countplot(x='O2 req.', data=merged, palette='Blues_d', edgecolor='black', hue='O2 req.',
+                  legend=False)
+    plt.title(f'O2 requirement class distribution - {dataset} dataset')
+    plt.xlabel('O2 required')
+    plt.ylabel('Count')
+    plt.savefig(f'{graphs_dir}/class_distribution_{dataset}.png', dpi=200)
+
+### MODEL_BUILDING.PY FUNCTIONS ########################################################################################
 # Detect metadata columns in the dataset
 def count_meta(dataset, name, metadata_features, drop, show_detail):
     matched = False # Initialise
