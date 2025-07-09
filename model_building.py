@@ -41,7 +41,7 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 import warnings
 from functions import count_meta, basic_train, IntToFloatTransformer, port_in_use, pca_original, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
-    plot_pca_predicted
+    plot_pca_predicted, plot_confusion_matrix
 import re
 import os
 from datetime import datetime
@@ -846,10 +846,10 @@ with mlflow.start_run(run_name=run_name) as run:
         ('classifier', classifier)
     ])
 
-    # Save features for validation - JSON (human-readable) and joblib
-    with open(f"{data_dir}/selected_features.json", "w") as f:
+    # Save inuput features for validation - JSON (human-readable) and joblib
+    with open(f"{data_dir}/input_features.json", "w") as f:
         json.dump(X_train.columns.tolist(), f)
-    joblib.dump(X_train.columns.tolist(), f"{data_dir}/selected_features.joblib")
+    joblib.dump(X_train.columns.tolist(), f"{data_dir}/input_features.joblib")
 
     # Train on full training data
     final_pipeline.fit(X_train, y_train)
@@ -883,6 +883,11 @@ with mlflow.start_run(run_name=run_name) as run:
     except Exception as e:
         print(f"Unable to print features for this feature selection method: {str(e)}")
 
+    # Save selected features for validation - JSON (human-readable) and joblib
+    with open(f"{data_dir}/selected_features.json", "w") as f:
+        json.dump(selected_features, f)
+    joblib.dump(selected_features, f"{data_dir}/selected_features.joblib")
+
     ### Log the final pipeline model
     # Create input example
     input_example = X_train.iloc[:1]
@@ -899,6 +904,9 @@ with mlflow.start_run(run_name=run_name) as run:
     cm = confusion_matrix(y_test, y_pred)
     print("Confusion Matrix:\n", cm)
 
+    # Save confusion matrix
+    plot_confusion_matrix(cm, graphs_dir)
+
     print(f"\nTest accuracy with best model ({classifier_type}): {test_accuracy:.4f}")
     print(f"Test F1 score with best model ({classifier_type}): {test_f1:.4f}")
 
@@ -906,8 +914,13 @@ with mlflow.start_run(run_name=run_name) as run:
     # Plot PCA on the combined dataset - i.e. original data after feature selection
     with mlflow.start_run(nested=True): #Start another run to avoid auologging conflicts
         mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
+
+        # Combine the datasets
+        X_full = pd.concat([X_train, X_test])
+        y_full = pd.concat([y_train, y_test]).reset_index(drop=True)
+
         # Call function to plot PCA on the dataset prior to feature selection
-        pca_original(X_train, X_test, selected_features, y_train, y_test, graphs_dir)
+        pca_original(X_full, selected_features, y_full, graphs_dir)
 
     # Plot learning curve
     plot_learning_curve(final_pipeline, X_train, y_train, graphs_dir)

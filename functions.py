@@ -5,7 +5,7 @@ from sklearn.inspection import permutation_importance
 from sklearn.pipeline import Pipeline
 from sklearn.tree import plot_tree, export_text
 from sklearn.calibration import calibration_curve, CalibrationDisplay
-from sklearn.metrics import accuracy_score, f1_score, brier_score_loss
+from sklearn.metrics import accuracy_score, f1_score, brier_score_loss, confusion_matrix
 from sklearn.model_selection import cross_val_score, StratifiedKFold, learning_curve, LearningCurveDisplay
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.metrics import roc_curve, auc, RocCurveDisplay, precision_recall_curve, average_precision_score, PrecisionRecallDisplay
@@ -363,12 +363,42 @@ def port_in_use(host: str, port: int) -> bool:
         return s.connect_ex((host, port)) == 0
 
 ### MODEL GRAPHS #######################################################################################################
+# Plot confusion matrix
+def plot_confusion_matrix(cm, graphs_dir): #TODO ai-gen and untested - Can also use ConfusionMatrixDisplay.from_predictions(y_data, predictions) with plt
+    fig, ax = plt.subplots()
+    im = ax.imshow(cm, interpolation="nearest", cmap=plt.cm.Blues)
+    ax.figure.colorbar(im, ax=ax)
+
+    # Label axes
+    classes = ["Negative", "Positive"]  # adjust to your own labels #TODO
+    ax.set(
+        xticks=range(len(classes)),
+        yticks=range(len(classes)),
+        xticklabels=classes,
+        yticklabels=classes,
+        ylabel="Actual Oxygen Need",
+        xlabel="Predicted Oxygen Need"
+    )
+
+    # Annotate each cell with the raw count
+    thresh = cm.max() / 2
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(
+                j, i, format(cm[i, j], "d"),
+                ha="center", va="center",
+                color="white" if cm[i, j] > thresh else "black"
+            )
+
+    fig.tight_layout()
+    fig.savefig(f"{graphs_dir}/confusion_matrix.png", dpi=150)
+    plt.close(fig)
+
+
 # Plot PCA on the combined dataset - i.e. original data after feature selection
-def pca_original(X_train, X_test, selected_features, y_train, y_test, graphs_dir):
-    # Combine X/y train and test for full dataset visualization
-    X_full = pd.concat([X_train, X_test])
+def pca_original(X_full, selected_features, y_full, graphs_dir):
+    # Select chosen features only
     X_selected = X_full[selected_features]
-    y_full = pd.concat([y_train, y_test]).reset_index(drop=True)
 
     # Standardize the selected data
     scaler = StandardScaler()  # WARNING Avoiding using the same one as in the pipeline to prevent data leakage - not sure if it's an issue but it will error when called later if used here due to different number of features
