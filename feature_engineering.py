@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.model_selection import GroupShuffleSplit
 import os
+from datetime import datetime
 from functions import check_abnormal_SIDs, calculate_overlaps, check_columns, check_empty_cols, \
     plot_row_missingness, plot_missingness_msno, investigate_null, remaining_meta, categorise_cols, numerical_check_nan, \
     plot_class_distribution
@@ -589,6 +590,31 @@ else:
 ### PLOT CLASS DISTRIBUTION ############################################################################################
 plot_class_distribution(merged_surrey, training_graphs, 'Surrey')
 plot_class_distribution(merged_isaric, validation_graphs, 'ISARIC')
+
+### FILTER TO DAY 0 TIMEPOINTS ONLY FOR SURREY #########################################################################
+  # As the metadata was recorded for only Day 0, the future timepoints have incorrect metadata. If using metadata only,
+  # this can be disabled.
+DayZero = True
+SID_dict = {}
+filtered_SIDs = []
+if DayZero:
+    SIDs = merged_surrey.index # Get SIDs
+    for sid in SIDs:
+        # Split SID into components
+        patient = sid.split("_")[0]
+        date = sid.split("_")[1]
+        # Convert to date
+        date_converted = datetime.strptime(date, "%d%m%y")
+        if patient not in SID_dict: # Add to dict if new SID
+            SID_dict[patient] = date
+        else: # Update dict if from an earlier timepoint
+            if date_converted < datetime.strptime(SID_dict[patient], "%d%m%y"):
+                SID_dict[patient] = date
+    # Recombine the SIDs
+    for k, v in SID_dict.items():
+        filtered_SIDs.append(f"{k}_{v}")
+    # Filter to Day 0 samples only
+    merged_surrey = merged_surrey[merged_surrey.index.isin(filtered_SIDs)]
 
 ### TRAIN/TEST SPLIT - KEEP PATIENT DATA TOGETHER ######################################################################
 #Train test split for Surrey only; ISARIC remains as one dataset for validation

@@ -1,10 +1,8 @@
 ### SCRIPT USAGE #######################################################################################################
 # Run this script to test models on the external ISARIC data.
 # Set the run_id to the ID of the finished model.
-from operator import truediv
 
 ######### SETUP ########################################################################################################
-import mlflow
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -14,9 +12,8 @@ import mlflow
 import joblib
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 import shutil
-from functions import port_in_use, pca_original, plot_learning_curve, \
-    plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
-    plot_pca_predicted, plot_confusion_matrix
+from functions import port_in_use, pca_original, plot_roc_auc, plot_feature_importance, plot_calibration_curve, \
+    plot_decision_tree, plot_precision_recall, plot_pca_predicted, plot_confusion_matrix
 
 ### LOAD ISARIC DATA ###################################################################################################
 data_dir = 'validation_data'
