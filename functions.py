@@ -9,7 +9,7 @@ from sklearn.metrics import accuracy_score, f1_score, brier_score_loss, confusio
 from sklearn.model_selection import cross_val_score, StratifiedKFold, learning_curve, LearningCurveDisplay
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.metrics import roc_curve, auc, RocCurveDisplay, precision_recall_curve, average_precision_score, PrecisionRecallDisplay
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA
 from xgboost import to_graphviz
@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import re
 import missingno as msno
+import miceforest as mf
 
 ### FEATURE ENGINEERING.PY #############################################################################################
 # Check for abnormal SIDs in the data; any unexpected lengths
@@ -267,6 +268,123 @@ def plot_class_distribution(merged, graphs_dir, dataset):
     plt.xlabel('O2 required')
     plt.ylabel('Count')
     plt.savefig(f'{graphs_dir}/class_distribution_{dataset}.png', dpi=200)
+
+### DATA_PREPROCESSING.PY FUNCTIONS ####################################################################################
+# Convert categories to pandas categorical - ordinal and nominal
+def convert_categories(dataset, ordinal_cats):
+    # Ordinal categories
+    for cat, codes in ordinal_cats.items():
+        if cat in dataset.columns: # Check that the column is present - allows same dict to be used for multiple datasets
+            # Convert to pandas category (ordered)
+            dataset[cat] = pd.Categorical(dataset[cat], categories=codes, ordered=True)
+
+    # Nominal categories - commented out for now as no nominal categories (also check as I realised my encoding above was previously wrong) - function is not updated for this either
+    # for cat in nominal_cats.keys():
+    #     dataset[cat] = pd.Categorical(dataset[cat], ordered=False)
+    return dataset
+
+# Normalise the MS data
+def normalise_MS(dataset, meta_cols):
+    # Separate out MS data
+    dataset_quant = dataset.iloc[:, meta_cols:]
+
+    # Get sample medians per row
+    medians = dataset_quant.median(axis=1)
+    # Subtract the median (due to being log2-transformed)
+    dataset_quant = dataset_quant.sub(medians, axis=0)
+    return dataset_quant
+
+# Plot missigness in the MS data by intensity
+def plot_missingness_ms(dataset, graphs_dir, name):
+    # Plot MS missingness by average intensity to determine if MNAR
+    mv_ratio = dataset.isna().mean()  # Proportion of missing values
+    avg_intensity = dataset.mean(skipna=True)
+    plot_df = pd.DataFrame({
+        'Log2_Avg_Intensity': avg_intensity,
+        'MV_Ratio': mv_ratio
+    })
+    plt.figure(figsize=(12, 6))
+    sns.scatterplot(data=plot_df, x='Log2_Avg_Intensity', y='MV_Ratio', alpha=0.7)
+    plt.xlabel('Average Intensity (Log2)')
+    plt.ylabel('Proportion of Missing Values')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(f'{graphs_dir}/Missing_by_intensity_{name}.png')
+    # Result: Greater missingness at lower intensities suggests MNAR prevalence due to left censoring (below detection limit)
+
+# Impute with miceforest package (MICE imputation)
+def impute_MICE(dataset, filename):
+    # Create a dataset to store intermediate columns for missingness handling
+    dataset_missing = dataset.copy()
+
+    # Store index values (have to reset for MICE)
+    original_index_dataset = dataset.index.copy()
+    # Reset index for miceforest use
+    dataset_missing = dataset_missing.reset_index(drop=True)
+    dataset_missing = dataset_missing.replace([np.inf, -np.inf], np.nan)
+
+    ### MAR Imputation for complete dataset with MICE
+    # Initialize kernel (handles categoricals natively)
+    kernel = mf.ImputationKernel(data=dataset_missing, num_datasets=3, random_state=42) # todo could increase with more memory (and for test)
+
+    # Run MICE with 10 iterations
+    kernel.mice(iterations=5, min_data_in_leaf=3) # TODO iterations was set to 10 but memory runs out, restore if running on HPC # Default MDIL is I think 20; experiment with this.
+    # kernel.plot_feature_importance(dataset=0) #todo commenting plots to try and reduce memory
+    # kernel.plot_imputed_distributions()
+    #
+    # # Save feature importance plot #todo haven't looked at these for the test or train data yet as i haven't been able to test generation, maybe remove. same for distributions
+    # TODO there is also a get feature importance function that returns a matrix
+    # todo also tune hyperparameters? would that give better prediction
+    # todo check miceforest usage examples - see github
+    # fig1 = kernel.plot_feature_importance(dataset=0)
+    # plt.tight_layout()
+    # plt.savefig(f'{graphs_dir}/Surrey_feature_importance_plot.png')
+    # plt.close(fig1)
+    #
+    # # Save imputed distributions plot
+    # fig2 = kernel.plot_imputed_distributions()
+    # plt.tight_layout()
+    # plt.savefig(f'{graphs_dir}/Surrey_imputed_distributions_plot.png')
+    # plt.close(fig2)
+
+    # # Save mean convergence plot #todo added from documentation so need to check
+    # fig3 = kernel.plot_mean_convergence(dataset=0)
+    # plt.tight_layout()
+    # plt.savefig(f'{graphs_dir}/Surrey_mean_convergence_plot.png')
+    # plt.close(fig3)
+
+    # Return dataset with missing values imputed
+    dataset_missing = kernel.complete_data()
+
+    # Restore the original index with SIDs
+    dataset_missing.index = original_index_dataset
+
+    # Update X_train data with the imputed datasets
+    dataset = dataset_missing
+
+    # Save the dataset - not needed for future processing, just to check correct processing
+    dataset.to_csv(filename)
+    return dataset
+
+# Encode categorical data
+def encode_categorical(dataset, ordinal_cats):
+    # Encode ordinal/binary data in X # IMPROVE can this be refined? eg sklearn OrdinalEncoder instead
+    for cat in ordinal_cats.keys():
+        if cat in dataset.columns:  # Check that the column is present - allows same dict to be used for multiple datasets
+            # Extract codes from the category dtype
+            dataset[cat] = dataset[cat].cat.codes
+
+            # Verify no missing values remain #todo might tweak this, haven't tested because of imputation memory issues
+            assert dataset[cat].isna().sum() == 0
+
+# Encode y data
+def encode_y(y):
+    label_encoder = LabelEncoder()
+    label_encoder.fit(y)
+    y_encoded = label_encoder.transform(y)
+    # Convert back to df
+    y = pd.DataFrame(y_encoded, index=y.index, columns=["O2 req."])
+    return y
 
 ### MODEL_BUILDING.PY FUNCTIONS ########################################################################################
 # Detect metadata columns in the dataset

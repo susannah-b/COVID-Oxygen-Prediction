@@ -12,28 +12,62 @@ import mlflow
 import joblib
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 import shutil
+import argparse
+import yaml
 from functions import port_in_use, pca_original, plot_roc_auc, plot_feature_importance, plot_calibration_curve, \
     plot_decision_tree, plot_precision_recall, plot_pca_predicted, plot_confusion_matrix
 
+### ARGPARSE TO SET RUN NAME ###########################################################################################
+  # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--run_name",
+    type=str,
+    default=None,
+    help="Run the script with a predetermined run name; only necessary for use in the pipeline.py script. If "
+         "running the script standalone the --run_name parameter is not used."
+)
+args = parser.parse_args()
+run_name = args.run_name # Note this is for the original run, not the validation run (which has _validation appended)
+
+#### READ CONFIG FILE ##################################################################################################
+# Set config path based on whether the script is run standlone or part of pipeline.py (config moved to 'inputs')
+if __name__ == "__main__":
+    config_path = Path("config.yaml")
+else:
+    config_path = Path(f"inputs/{run_name}/config.yaml")
+
+# Read config file
+with open(config_path, "r") as f:
+    config = yaml.safe_load(f)
+
+# Set parameters for this file:
+host = config['general']['host']
+port = config['general']['port']
+
 ### LOAD ISARIC DATA ###################################################################################################
-data_dir = 'validation_data'
+# Set input directories
+if __name__ == "__main__": # If calling as a standalone script, save to the current working directory
+    data_dir = 'validation_data' # Combine with other validation graphs if using training data
+else: # Put into input storage folder to prevent overwriting
+    data_dir = f'inputs/{run_name}/validation_data'
+
+# Create output directory for the graphs
+if __name__ == '__main__': # If calling as a standalone script, save to the current working directory
+    graphs_dir = 'validation_graphs' # Combine with other validation graphs if using training data
+else: # Put into input storage folder to prevent overwriting
+    graphs_dir = f'inputs/{run_name}/validation_graphs'
+
 dataset = "ISARIC"
-X_path = Path(__file__).parent / data_dir / f"{dataset}_X_train.csv" # Note: Although the ISARIC data as saved as 'train' data, this is actually the wholedataset for validation/testing
-y_path = Path(__file__).parent / data_dir / f"{dataset}_y_train.csv"
+X_path = Path(__file__).parent / data_dir / f"{dataset}_X.csv" # Note: Although the ISARIC data as saved as 'train' data, this is actually the wholedataset for validation/testing
+y_path = Path(__file__).parent / data_dir / f"{dataset}_y.csv"
 X_data = pd.read_csv(X_path, index_col=0)
 y_data = pd.read_csv(y_path, index_col=0)
 
 # Ensure y_data is a 1-D Series #TODO why do i need to do this for exval but not m_b?
 y_data = y_data.reset_index(drop=True).squeeze() # Convert to a series to avoid an issue with plot_pca_predicted
 
-# Set output folders
-graphs_dir = 'validation_graphs'
-
 ### MLFLOW TRACKING ####################################################################################################
-# Start local tracking server
-host = "127.0.0.1" # Note: for unified tracking change these to be the same as in model_building.py
-port = 8080
-
 if not port_in_use(host, port):
     print(f"Running tracking server on {host}:{port}")
     subprocess.Popen(["mlflow", "server", "--backend-store-uri", "./mlruns", "--host", host, "--port", f"{port}"])
@@ -47,8 +81,12 @@ else:
 mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 
 ### LOAD MODEL #########################################################################################################
-# Set run info to take model from
-model_name = "13_0709-2311_RF_only_practice_validation" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+if __name__ == "__main__":
+    # Set run info to take model from manually
+    model_name = "1_0710-1129_400_eval_all_time_comparison" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+else:
+    model_name = run_name
+
 # Load model by run ID
 model_output = f"model_output/{model_name}"
 model_path = f"{model_output}/artifacts/best_model"
@@ -73,12 +111,9 @@ X_data = X_data.reindex(columns=input_features)
 
 ### FIT MODEL ##########################################################################################################
 mlflow.sklearn.autolog()
-store_val_id = None # Initialise value to store run ID to print at end
-val_run_id = None # ID for validation run
-val_exp_id = None # ID for validation run
 
 # Set run name - OG model with _validation appended
-run_name = f"{model_name}_validation"
+val_run_name = f"{model_name}_validation"
 
 # Get classifier type
 classifier_path = Path(f"{model_output}/params/type")
@@ -86,9 +121,9 @@ with open(classifier_path, 'r') as f:
     classifier_type = f.read().strip()
 
 # Start MLflow run
-with mlflow.start_run(run_name=run_name) as run:
+with mlflow.start_run(run_name=val_run_name) as run:
     print(f"Now predicting oxygen need for the validation data using the {classifier_type} model.")
-    mlflow.set_tag("Run name", run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
+    mlflow.set_tag("Run name", val_run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
     mlflow.set_tag("Phase", "Model validation")
     # mlflow.set_tag("Hyperopt MLflow run", hyperopt_name) # Note: haven't included the associated hyperopt selection run for OG model but could be determined if useful
     mlflow.log_param("mlflow_run_name", run.info.run_name)
@@ -144,7 +179,7 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Print run id
     val_run_id = run.info.run_id
-    store_val_id = f"Run {run_name} for validation predictions completed. Run ID is {val_run_id}"
+    store_val_id = f"Run {val_run_name} for validation predictions completed. Run ID is {val_run_id}"
 
     # Log artifacts
     mlflow.log_artifacts(graphs_dir, artifact_path="graphs")

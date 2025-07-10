@@ -1,11 +1,5 @@
 ### SCRIPT USAGE #######################################################################################################
 # Run this script to train the ML model using the Surrey dataset.
-# To use the run_name_config.txt, modify the file to start with the desired ID number and suffix in quotes, or delete to
-# generate a fresh file. The suffix string is optional.
-#   The run_name for MLflow will be produced in the format N_MMDD-HH:MM_[suffix]. Change the suffix to the desired string
-#   to represent the run, e.g. for runs without metadata "no_metadata" may be added.
-#   The suffix will be used as a descriptor for the run in the final output subdirectory, so should be descriptive of the
-#   settings for the model.
 
 # If track_final is enabled, the logged model and graphs will be copied to the model_output subdirectory for perusal,
 # including a file stating the corresponding hyperopt MLflow run name. In the MLflow UI, this hyperopt run will also be added as a
@@ -34,6 +28,7 @@ from xgboost import XGBClassifier, to_graphviz
 from xgboost import plot_tree as xgb_plot_tree
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
 import mlflow
+import yaml
 import mlflow.sklearn
 from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
@@ -50,6 +45,7 @@ import time
 import shutil
 import json
 import joblib
+import argparse
 # todo clean up at end
 
 #IMPROVE Break script into smaller parts
@@ -62,17 +58,64 @@ warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 # Bool to show additional detail
 show_detail = False
 
+### ARGPARSE TO SET RUN NAME ###########################################################################################
+  # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--run_name",
+    type=str,
+    default=None,
+    help="Run the script with a predetermined run name; only necessary for use in the pipeline.py script. If "
+         "running the script standalone the --run_name parameter is not used."
+)
+args = parser.parse_args()
+run_name = args.run_name
+
+#### READ CONFIG FILE ##################################################################################################
+# Set config path based on whether the script is run standlone or part of pipeline.py (config moved to 'inputs')
+if __name__ == "__main__":
+    config_path = Path("config.yaml")
+else:
+    config_path = Path(f"inputs/{run_name}/config.yaml")
+
+# Read config file
+with open(config_path, "r") as f:
+    config = yaml.safe_load(f)
+
+# Set parameters for this file:
+validate = config['general']['validate']
+var_threshold = config['model_building']['var_threshold']
+feature_selection = config['model_building']['feature_selection']
+basic_training = config['model_building']['basic_training']
+n_models_to_tune = config['model_building']['n_models_to_tune']
+host = config['general']['host']
+port = config['general']['port']
+
+# Determine which models to test (set in config file)
+Logistic_regression = config['model_building']['models_to_test']['Logistic_regression']
+SVM = config['model_building']['models_to_test']['SVM']
+Random_forest = config['model_building']['models_to_test']['Random_forest']
+AdaBoost = config['model_building']['models_to_test']['AdaBoost']
+Gradient_boosting = config['model_building']['models_to_test']['Gradient_boosting']
+XGBoost = config['model_building']['models_to_test']['XGBoost']
+KNN = config['model_building']['models_to_test']['KNN']
+
 ### READ IN DATA #######################################################################################################
 # Set pandas to display all columns and longer rows # IMPROVE remove in final version
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 180)
 
-# Create output directory for the data
-data_dir = 'training_data'
-os.makedirs(data_dir, exist_ok=True)
-# Create graphs directory for the data
-graphs_dir = 'training_graphs'
-os.makedirs(graphs_dir, exist_ok=True)
+# Create output directories for the data
+if __name__ == "__main__": # If calling as a standalone script, save to the current working directory
+    data_dir = 'training_data' # Combine with other training graphs if using training data
+else: # Put into input storage folder to prevent overwriting
+    data_dir = f'inputs/{run_name}/training_data'
+
+# Create output directory for the graphs
+if __name__ == '__main__': # If calling as a standalone script, save to the current working directory
+    graphs_dir = 'training_graphs' # Combine with other training graphs if using training data
+else: # Put into input storage folder to prevent overwriting
+    graphs_dir = f'inputs/{run_name}/training_graphs'
 
 ### Read in data
 # Train
@@ -92,21 +135,16 @@ pd.set_option('display.max_columns', None)
 #  in Surrey data. It would be worth experimenting with dropping some of these here to see if the model improves (although if not feature-selected
 #  then it most likely has very minimal impact. Do here to avoid regenerating data, although technically it could affect imputation/scaling/maybe FS.
 
-### OPTIONAL: DROP METADATA ############################################################################################ #TODO once the model is finished and can run on HPC, run with and without dropping to compare results
-drop_metadata = False # To experiment with excluding metadata from the model, enable this option
-
-# Read in the original metadata file to read the column info
-s_meta_file = Path(__file__).parent / "Surrey_Files" / "Surrey_Metadata_master_spreadsheet_130622_edit2.csv"
-s_meta = pd.read_csv(s_meta_file)
-# List starting and filtered columns
-meta_columns = s_meta.columns.tolist()
-
-meta_cols = 0 # Initialise
-
-# Call function to count metadata columns
-meta_cols,X_train = count_meta(X_train, "X_train", meta_columns, drop_metadata, show_detail)
-meta_cols,X_test = count_meta(X_test, "X_test", meta_columns, drop_metadata, show_detail) # Colummn # should be identical for test and train, so can just reassign
-
+### COUNT METADATA #####################################################################################################
+# TODO: think this can be removed as I no longer drop metadata here but in preprocessing.
+# # Read in the original metadata file to read the column info
+# s_meta_file = Path(__file__).parent / "Surrey_Files" / "Surrey_Metadata_master_spreadsheet_130622_edit2.csv"
+# s_meta = pd.read_csv(s_meta_file)
+# # List starting and filtered columns
+# meta_columns = s_meta.columns.tolist()
+#
+# # Call function to count metadata columns (X_train only due to identical columns)
+# meta_cols, X_train = count_meta(X_train, "X_train", meta_columns, False, show_detail) # Note that drop is always false in this usage - even if changed for previous data
 
 ### PCA ON ORIGINAL DATA ###############################################################################################
 try:
@@ -153,7 +191,7 @@ except Exception as e:
 variances = X_train.var(axis=0)
 #threshold = np.median(variances) # Example of thresholds - either delete or experiment with
 #threshold = np.quantile(variances, 0.75)
-threshold = 1e-10 # Effectively zero but avoids floating-point issues
+threshold = float(var_threshold) # Effectively zero but avoids floating-point issues
 
 ### VARIANCE INFLATION FACTOR ANALYSIS #################################################################################
 # Note: currently nothing further is done with these results. The values are very high and across the entire dataset which is a problem for linear regression models: could be bypassed by omitting linear regression models (logistic regression)
@@ -191,8 +229,6 @@ class IntToFloatTransformer(BaseEstimator, TransformerMixin):
         return X
 
 ### DEFINE FEATURE SELECTION PER MODEL #################################################################################
-# Whether to do feature selection or not - applies to all steps (basic training, hyperparameter exploration, and final model training
-feature_selection = True
 
 ### Feature selection methods taken from scikit-learn documentation # IMPROVE - methods were chosen to cover a wide range of approaches/models but could be tweaked further
 # Dictionary of feature selector options. base_params are fixed parameters that also apply to basic_train, with other parameters tunable later in the search space #IMPROVE Go over docu and check parameter options
@@ -333,22 +369,11 @@ feature_selectors = { #TODO need to test and uncomment all methods - and look up
 
 
 ### ESTIMATE BEST MODELS WITH BASIC SETTINGS ###########################################################################
-# Bool to decide whether to go through the training of basic models to determine the most promising candidates/feature selectors
-basic_training = True
-
 # Initialise dict to store best results per model
 top_model_scores = {}
 
-# Determine which models to test
-Logistic_regression = False
-SVM = False
-Random_forest = True
-AdaBoost = False
-Gradient_boosting = False
-XGBoost = True
-KNN = False
-
-#  WARNING version with all switched on - delete other after testing:
+#  WARNING override version vs using config for testing - delete  after testing:
+n_models_to_tune = 2
 # Logistic_regression = True
 # SVM = True
 # Random_forest = True
@@ -356,6 +381,14 @@ KNN = False
 # Gradient_boosting = True
 # XGBoost = True
 # KNN = True
+
+Logistic_regression = False
+SVM = False
+Random_forest = True
+AdaBoost = False
+Gradient_boosting = False
+XGBoost = False
+KNN = False
 
 # Dictionary to store the highest performing models and their feature selection methods
 best_models_fs = {}
@@ -408,10 +441,8 @@ if basic_training:
     print(scores.head(len(scores)))
 
     ### Determine the best performing models to take to the tuning phase
-    # Initialise objects
-    n_models_to_tune = 2  # The top N models - change this as needed #IMPROVE change back after tests - 2 or 3
     # Extract best model and feature selection from top_model_scores
-    for i in range(0, n_models_to_tune):
+    for i in range(0, n_models_to_tune-1): # todo think this errors if more than the number of models - should pick the minimum of those values
         model = scores.iloc[i, 0]
         fs = scores.iloc[i, 1]
         best_models_fs[model] = fs
@@ -690,10 +721,6 @@ search_space = hp.choice('classifier_type', best_spaces)
 # Make folder for tracking runs
 os.makedirs('./mlruns', exist_ok=True)
 
-# Start local tracking server
-host = "127.0.0.1"
-port = 8080
-
 if not port_in_use(host, port):
     print(f"Running tracking server on {host}:{port}")
     subprocess.Popen(["mlflow", "server", "--backend-store-uri", "./mlruns", "--host", host, "--port", f"{port}"])
@@ -706,42 +733,23 @@ else:
 # Set MLFLow tracking URI
 mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 
-### CREATE RUN ID ######################################################################################################
-config_path = Path("run_name_config.txt") # Path to file
-run_name = None # Initialise
-hyperopt_name = None
-
-if not os.path.exists(config_path):
-    # If config file doesn't exist, create a 'blank' one
-    with open(config_path, 'w') as file:
-        file.write('1 ""')
-else:
-    ### Read in the run ID settings
-    with open(config_path, "r") as f:
-        content = f.read().strip()
-        # Extract numeric prefix and optional quoted suffix
-        match = re.match(r"(\d+)\s*(['\"]?)(.*?)\2?$", content) # Digit and optional quoted suffix
-        if not match:
-            raise ValueError("run_name_config.txt should be formatted like: 1 \"[string]\" or 1. Delete file to generate a fresh config, or modify accordingly.")
-        # Set ID info
-        run_number = int(match.group(1))
-        suffix = match.group(3)
-        timestamp = datetime.now().strftime("%m%d-%H%M")
-        # Set run name for final model
-        run_name = f"{run_number}_{timestamp}"
-        if not suffix:
-            suffix = "Unspecified" # If no description of the model run has been set in config, then just tag as unspecified
-        run_name = f"{run_name}_{suffix}"
-        # Set run name for hyperopt
-        hyperopt_name = f"{run_number}_hyperopt_{timestamp}_{suffix}"
-    # Increase the run_name by one for the next run
-    with open(config_path, "w") as f:
-        f.write(f"{run_number + 1} \"{suffix}\"")
+### CREATE RUN NAME ####################################################################################################
+if __name__ == "__main__":
+     # Set run name - when run as part of pipeline.py instead, this is defined as an argument. Here it needs to be set so the model_output folder can be made, etc.
+     timestamp = datetime.now().strftime("%m%d-%H%M%S")
+     run_number = config["general"]["run_number"]
+     run_suffix = config["general"]["run_suffix"] or "Unspecified"  # Set to unspecified if empty
+     run_name = f"{run_number}_{timestamp}_{run_suffix}"  # Unique ID for each model built
+     # Set ID for hyperopt
+     hyperopt_name = f"{run_number}_hyperopt_{timestamp}_{run_suffix}"
+     # Increase the run_name by one for the next run
+     with open(config_path, "w") as f:
+         config["general"]["run_number"] = run_number + 1
+         yaml.dump(config, f, sort_keys=False)
+     # WARNING: Run name is not automatically imported to external_validation.py if running standalone to allow specific runs to be used. Set manually.
 
 ### HYPEROPT TUNING WITH MLFLOW ########################################################################################
 print("\nNow tuning hyperparameters\n")
-store_hyp_id = None # Call this later to print the ID at the end
-hyper_run_id = None
 
 mlflow.set_experiment("Oxygen Prediction - Hyperparams") # Note: Could use same experiment ID as the final model in order to compare; for now I find it easier to keep them separate.
 with mlflow.start_run(run_name=hyperopt_name) as run:
@@ -750,7 +758,7 @@ with mlflow.start_run(run_name=hyperopt_name) as run:
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=10, #todo: increase on a better machine # IMPROVE this and other settings/bools could be set using a config file
+        max_evals=3, #todo: increase on a better machine # IMPROVE this and other settings/bools could be set using a config file
         trials=Trials()
     )
     # Print run id
@@ -992,7 +1000,6 @@ print(store_final_id)
 
 # WARNING: If getting the 'too many 500 error responses' warning due to deleting files, run 'kill $(lsof -t -i tcp:8080)' in the terminal
 
-
 # Example output:
 # Test accuracy with best model (rf): 0.6000
 # Test F1 score with best model (rf): 0.6957
@@ -1002,7 +1009,3 @@ print(store_final_id)
 #  Could also do an ensemble model approach for the final training, and stacking/voting
 
 # IMPROVE once final model is obtained, I'll likely want to plot more model-specific graphs
-
-# TODO early stopping?
-
-#todo extrapolate graphs into functions or class and apply to model building and validation

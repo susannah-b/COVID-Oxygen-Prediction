@@ -1,17 +1,30 @@
 ### SCRIPT USAGE #######################################################################################################
-# Run this script twice with the required bools (See note on line ~28) to investigate and clean 1. The Surrey data used
-# for training the model, and 2. the ISARIC data used for external validation.
+# This script is the first in the series of model development scripts. It can be run standalone (which uses files from
+# the current working directory to run the script before pasting the final outputs to model_outputs), or as part of
+# pipeline.py which copies the input files to a new 'inputs' folder and works from there to remove any risk of
+# overwriting.
+# Run this script to investigate and clean 1. The Surrey data used for training the model, and 2. the ISARIC data used
+# for external validation.
+
+# Set values in config.yaml. See the default_config.yaml for details on how each is used. Edit the config.yaml (NOT
+# the default_config.yaml) to adjust the run settings. For runs executed with pipeline.py, the config file for each run
+# will be stored in 'inputs' under the run name.
+
 # WARNING: If externally validating, the script must be run first for the validation data before the training data.
 #  This is due to a (temporary) fix to prevent columns dropped from ISARIC being included in the training data.
 #  Ideally this will be later improved to allow flexibility.
 ######### SETUP ########################################################################################################
 # Imports
+import argparse
 import pandas as pd
 from pathlib import Path
 import numpy as np
 from sklearn.model_selection import GroupShuffleSplit
 import os
+import json
 from datetime import datetime
+import yaml
+import shutil
 from functions import check_abnormal_SIDs, calculate_overlaps, check_columns, check_empty_cols, \
     plot_row_missingness, plot_missingness_msno, investigate_null, remaining_meta, categorise_cols, numerical_check_nan, \
     plot_class_distribution
@@ -20,7 +33,7 @@ from functions import check_abnormal_SIDs, calculate_overlaps, check_columns, ch
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 180)
 
-# Bools to determine what to print
+# Bools to determine what to print - set here not in config for ease of changing during testing
 sample_inves_1 = False # Metadata info
 sample_inves_2 = False # Metadata vs quant info
 sample_inves_3 = False # Overlap of metadata vs quant
@@ -31,8 +44,41 @@ sample_inves_7 = False # Missingness
 sample_inves_8 = False # Numerical conversion
 sample_inves_9 = False # Dropped colums
 
-# Bool to determine whether to make the Surrey dataset validation compatible (if False, can ignore ISARIC data)
-validate = True # Switch on if processing the validation dataset
+### ARGPARSE TO SET RUN NAME ###########################################################################################
+  # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--run_name",
+    type=str,
+    default=None,
+    help="Run the script with a predetermined run name; only necessary for use in the pipeline.py script. If "
+         "running the script standalone the --run_name parameter is not used."
+)
+args = parser.parse_args()
+run_name = args.run_name
+
+#### READ CONFIG FILE ##################################################################################################
+# Set config path based on whether the script is run standlone or part of pipeline.py (config moved to 'inputs')
+if __name__ == "__main__":
+    config_path = Path("config.yaml")
+else:
+    config_path = Path(f"inputs/{run_name}/config.yaml")
+
+# Create config fil if it doesn't exist
+default_config = Path("default_config.yaml")
+if not os.path.exists(config_path):
+    shutil.copy2(default_config, config_path)
+
+# Read config file # IMPROVE Some settings (e.g. training_data directory) could be moved to the config instead of hardcoded. For now only commonly changed settings are added
+with open(config_path, "r") as f:
+    config = yaml.safe_load(f)
+
+# Set parameters for this file:
+validate = config['general']['validate']
+day_zero = config['feature_engineering']['day_zero']
+
+########################################################################################################################
+# todo - change cwd to github folder; currently assumes it's in there already. maybe for other scripts. including pipeline.py
 
 # Read in data
 quant_file = Path(__file__).parent / "Surrey_Files" / "KR_Covid_DIA_Pt_gene_Serum30_Report_Protein Quant (Pivot).xls"
@@ -45,16 +91,28 @@ isaric = pd.read_csv(isaric_file, index_col=0) # Avoid creating Unnamed: 0 colum
 phosp = pd.read_excel(phosp_file)
 
 # Create output directories for the data
-training_data = 'training_data' # Combine with other training graphs if using training data
-validation_data = 'validation_data' # Combine with other validation graphs if using training data
-os.makedirs(training_data, exist_ok=True)
-os.makedirs(validation_data, exist_ok=True)
+if __name__ == '__main__': # If calling as a standalone script, save to the current working directory
+    training_data = 'training_data' # Combine with other training graphs if using training data
+    validation_data = 'validation_data' # Combine with other validation graphs if using training data
+    os.makedirs(training_data, exist_ok=True)
+    os.makedirs(validation_data, exist_ok=True)
+else: # Put into input storage folder to prevent overwriting
+    training_data = f'inputs/{run_name}/training_data'
+    validation_data = f'inputs/{run_name}/validation_data'
+    os.makedirs(training_data, exist_ok=True)
+    os.makedirs(validation_data, exist_ok=True)
 
 # Create output directory for the graphs
-training_graphs = 'training_graphs' # Combine with other training graphs if using training data
-validation_graphs = 'validation_graphs' # Combine with other validation graphs if using training data
-os.makedirs(training_graphs, exist_ok=True)
-os.makedirs(validation_graphs, exist_ok=True)
+if __name__ == '__main__': # If calling as a standalone script, save to the current working directory
+    training_graphs = 'training_graphs' # Combine with other training graphs if using training data
+    validation_graphs = 'validation_graphs' # Combine with other validation graphs if using training data
+    os.makedirs(training_graphs, exist_ok=True)
+    os.makedirs(validation_graphs, exist_ok=True)
+else: # Put into input storage folder to prevent overwriting
+    training_graphs = f'inputs/{run_name}/training_graphs'
+    validation_graphs = f'inputs/{run_name}/validation_graphs'
+    os.makedirs(training_data, exist_ok=True)
+    os.makedirs(validation_data, exist_ok=True)
 
 # Quant data preprocessing
 quant.columns = quant.iloc[0] # Set protein names (now row 0) as column headers
@@ -359,6 +417,10 @@ isaric_cols = {'age_admission' : 'Age',
                }
                # Note: Weight is in the PHOSP metadataset, but is NaN for all values. BMI therefore also can't be calculated.
 
+# Save dict to .json so data_preprocessing.py can access it
+with open(f'{validation_data}/isaric_cols.txt', 'w') as file:
+    file.write(json.dumps(isaric_cols))
+
 # Rename ISARIC columns
 merged_isaric.rename(columns=isaric_cols, inplace=True)
 # Drop extraneous columns in ISARIC
@@ -593,11 +655,11 @@ plot_class_distribution(merged_isaric, validation_graphs, 'ISARIC')
 
 ### FILTER TO DAY 0 TIMEPOINTS ONLY FOR SURREY #########################################################################
   # As the metadata was recorded for only Day 0, the future timepoints have incorrect metadata. If using metadata only,
-  # this can be disabled.
-DayZero = True
+  # this can be disabled to allow all timepoints.
+day_zero = True
 SID_dict = {}
 filtered_SIDs = []
-if DayZero:
+if day_zero:
     SIDs = merged_surrey.index # Get SIDs
     for sid in SIDs:
         # Split SID into components
