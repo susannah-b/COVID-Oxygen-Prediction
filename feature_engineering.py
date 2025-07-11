@@ -339,7 +339,7 @@ remove_cols = ['Sample', # Stored as row indexes
                'Date of first Mabra samples collected',
                'Date of vaccination', # TODO this column is useful for time since vaccination and Y/N vaccinated, however for now removing as 1) it's highly missing anyway and 2) Need to do more processing before inclusion. But come back to
                'Ethnicity', # Largely biased towards white so would be misleading
-               #'Height (cm)', # TODO on second thought kept this in, but not sure
+               #'Height (cm)', # TODO on second thought kept this in, but not sure if it is eg correlated with Gender and leads to bias (dropped with isaric regardless)
                'Hospital site', # TODO Possibly could impact care but I think a confounding feature? Maybe try with and without
                'MABRA ID', # Irrelevant
                'MABRA ID.1', # Irrelevant

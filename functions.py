@@ -413,6 +413,7 @@ def count_meta(dataset, name, metadata_features, drop, show_detail):
 def basic_train(model, X_train, y_train, identifier, scores_dict, feature_selectors, feature_selection, threshold):
     # Iterate over feature selectors
     model_results = {}
+    overall_summary = []
     for fs_name, selector_config in feature_selectors.items():
         # Build selector from configuration
         if fs_name == 'NONE':
@@ -439,15 +440,17 @@ def basic_train(model, X_train, y_train, identifier, scores_dict, feature_select
             # Fit the pipeline on the training data
             pipe.fit(X_train, y_train)
             y_pred = pipe.predict(X_train)
+            # Metrics calculation
             f1_train = f1_score(y_train, y_pred)
             accuracy_train = accuracy_score(y_train, y_pred)
 
-            #model_results[fs_name] = [identifier, fs_name, f1_train, f1_val.mean(), accuracy_train, accuracy_val.mean()]
+            # List results for each feature selection method
             model_results[fs_name] = [identifier, fs_name, accuracy_train, accuracy_val.mean(), f1_train, f1_val.mean(), ]
             print(f"Training of {identifier} using {fs_name} complete.")
         except Exception as e:
             print(f"Error training {identifier} with {fs_name}: {str(e)}")
             model_results[identifier] = [identifier, None, None, None, None, None]
+
     # Print results from best feature selection methods
     model_results_df = pd.DataFrame.from_dict(model_results,
                            orient='index',
@@ -455,6 +458,7 @@ def basic_train(model, X_train, y_train, identifier, scores_dict, feature_select
                                     'Test F1']).sort_values(by=['Test F1'], ascending=False)
     print(f"Metrics from {identifier} experimentation:")
     print(model_results_df, "\n")
+
     # Take the top result unless empty
     if model_results_df.empty:
         scores_dict[identifier] = [identifier, None, None, None, None, None]
@@ -462,6 +466,31 @@ def basic_train(model, X_train, y_train, identifier, scores_dict, feature_select
     else:
         scores_dict[identifier] = model_results_df.iloc[0].to_list()
     print(f"Finished training {identifier}")
+
+    # Return the overall results list for the model
+    return model_results_df
+
+# Plot the performance of feature selectors per model
+def plot_fs_performance(all_results_sorted, graphs_dir):
+    plt.figure(figsize=(12, 8))
+    sns.lineplot(data=all_results_sorted,
+                 x='Model',
+                 y='Test F1',
+                 hue='Selector',
+                 style='Selector',
+                 markers=True,
+                 dashes=False,
+                 markersize=10,
+                 linewidth=2.5)
+
+    plt.title('Feature Selector Performance Across Models', fontsize=16)
+    plt.xlabel('Model', fontsize=14)
+    plt.ylabel('Test F1 Score', fontsize=14)
+    plt.xticks(rotation=15)
+    plt.legend(title='Feature Selectors', title_fontsize=12, fontsize=10)
+    plt.grid(alpha=0.2)
+    plt.tight_layout()
+    plt.savefig(f"{graphs_dir}/selector_performance.png", bbox_inches='tight')
 
 # Convert integers to floats
 class IntToFloatTransformer(BaseEstimator, TransformerMixin):

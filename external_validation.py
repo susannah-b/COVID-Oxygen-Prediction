@@ -190,7 +190,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
 # (which is also available in the server) but renamed here for easier access based on the original model name.
 # Bool to set whether to copy the runs to the final output subdirectory - for testing only this can be disabled
 track_final = True #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful
-if track_final:
+if track_final: #todo add to config, and for m_b
     print(f"\'track_final\' has been enabled, so the model information will be copied to ./model_output under the original experiment {model_name} for easier viewing.")
 
     # Determine file locations

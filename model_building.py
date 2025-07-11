@@ -36,7 +36,7 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 import warnings
 from functions import count_meta, basic_train, IntToFloatTransformer, port_in_use, pca_original, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
-    plot_pca_predicted, plot_confusion_matrix
+    plot_pca_predicted, plot_confusion_matrix, plot_fs_performance
 import re
 import os
 from datetime import datetime
@@ -229,10 +229,10 @@ class IntToFloatTransformer(BaseEstimator, TransformerMixin):
         return X
 
 ### DEFINE FEATURE SELECTION PER MODEL #################################################################################
-
+# TODO add a config setting to limit to specify which ones to include (add comment to suggest shorter ones)
 ### Feature selection methods taken from scikit-learn documentation # IMPROVE - methods were chosen to cover a wide range of approaches/models but could be tweaked further
-# Dictionary of feature selector options. base_params are fixed parameters that also apply to basic_train, with other parameters tunable later in the search space #IMPROVE Go over docu and check parameter options
-feature_selectors = { #TODO need to test and uncomment all methods - and look up sklearn docu to refine base/search space params and options
+# Dictionary of feature selector options. base_params are fixed parameters that also apply to basic_train, with other parameters tunable later in the search space
+feature_selectors = {
     # # RFECV with Logistic Regression
     # 'RFECV_LR': {
     #     'class': RFECV,
@@ -241,65 +241,62 @@ feature_selectors = { #TODO need to test and uncomment all methods - and look up
     #         'step': 1,
     #         'cv': StratifiedKFold(5),
     #         'scoring': "f1",
-    #         'min_features_to_select': 1,
-    #         'n_jobs': 2
+    #         'min_features_to_select': 50,
     #     }
     # },
     # # RFECV with Support Vector Classifier
     # 'RFECV_SVC': {
     #     'class': RFECV,
     #     'base_params': {
-    #         'estimator': SVC(),
+    #         'estimator': SVC(kernel='linear'),
     #         'step': 1,
     #         'cv': StratifiedKFold(5),
     #         'scoring': "f1",
-    #         'min_features_to_select': 1,
-    #         'n_jobs': 2
+    #         'min_features_to_select': 50,
     #     }
     # },
-    # # RFECV with Random Forest
+    # # RFECV with Random Forest #TODO untested - takes very long so either run on HPC or with more time
     # 'RFECV_RF': {
     #     'class': RFECV,
     #     'base_params': {
-    #         'estimator': RandomForestClassifier(),
+    #         'estimator': RandomForestClassifier(random_state=42),
     #         'step': 1,
     #         'cv': StratifiedKFold(5),
     #         'scoring': "f1",
-    #         'min_features_to_select': 1,
-    #         'n_jobs': 2
+    #         'min_features_to_select': 50,
     #     }
     # },
-    # # RFECV with XGBoost
+    # # RFECV with XGBoost #TODO untested - takes very long so either run on HPC or with more time
     # 'RFECV_XGB': {
     #     'class': RFECV,
     #     'base_params': {
-    #         'estimator': XGBClassifier(),
+    #         'estimator': XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, colsample_bytree=0.8,
+    #                                    eval_metric='logloss', random_state=42),
     #         'step': 1,
     #         'cv': StratifiedKFold(5),
     #         'scoring': "f1",
-    #         'min_features_to_select': 1,
-    #         'n_jobs': 2
+    #         'min_features_to_select': 50,
     #     }
     # },
-    # # SelectFromModel with Logistic Regression
+    # SelectFromModel with Logistic Regression
     # 'SFM_LR': {
     #     'class': SelectFromModel,
     #     'base_params': {
-    #         'estimator': LogisticRegression(solver='saga', tol=1e-3, max_iter=200)
+    #         'estimator': LogisticRegression()
     #     }
     # },
-    # # SelectFromModel with Support Vector Classifier
-    # 'SFM_SVC': {
-    #     'class': SelectFromModel,
-    #     'base_params': {
-    #         'estimator': SVC()
-    #     }
-    # },
+    # SelectFromModel with Support Vector Classifier
+    'SFM_SVC': {
+        'class': SelectFromModel,
+        'base_params': {
+            'estimator': SVC(kernel='linear')
+        }
+    },
     # SelectFromModel with Random Forest
     'SFM_RF': {
         'class': SelectFromModel,
         'base_params': {
-            'estimator': RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42),
+            'estimator': RandomForestClassifier(random_state=42),
             'threshold': "median"
         }
     },
@@ -307,23 +304,25 @@ feature_selectors = { #TODO need to test and uncomment all methods - and look up
     # 'SFM_XGB': {
     #     'class': SelectFromModel,
     #     'base_params': {
-    #         'estimator': XGBClassifier()
+    #         'estimator': XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, colsample_bytree=0.8,
+    #                                    eval_metric='logloss', random_state=42)
     #     }
     # },
-    # # SelectFromModel with Lasso
-    # 'SFM_LAS': {
-    #     'class': SelectFromModel,
-    #     'base_params': {
-    #         'estimator': Lasso()
-    #     }
-    # },
+    # SelectFromModel with Lasso
+    'SFM_LAS': {
+        'class': SelectFromModel,
+        'base_params': {
+            'estimator': Lasso(alpha=0.05, max_iter=10000, random_state=42)
+        }
+    },
     # # Sequential Feature Selection with Logistic Regression
     # 'SFS_LR': {
     #     'class': SequentialFeatureSelector,
     #     'base_params': {
     #         'estimator': LogisticRegression(),
     #         'n_features_to_select': 'auto',
-    # }
+    #         'tol': 0.01,
+    #     }
     # },
     # # Sequential Feature Selection with Linear SVC
     # 'SFS_LSVC': {
@@ -331,42 +330,25 @@ feature_selectors = { #TODO need to test and uncomment all methods - and look up
     #     'base_params': {
     #         'estimator': LinearSVC(),
     #         'n_features_to_select': 'auto',
-    # }
+    #         'tol': 0.01,
+    #     }
     # },
-    # # Sequential Feature Selection with XGBoost
+    # # Sequential Feature Selection with XGBoost #TODO untested - takes very long so either run on HPC or with more time
     # 'SFS_XGB': {
     #     'class': SequentialFeatureSelector,
     #     'base_params': {
-    #         'estimator': XGBClassifier(),
+    #         'estimator': XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, colsample_bytree=0.8,
+    #                                    eval_metric='logloss', random_state=42),
     #         'n_features_to_select': 'auto',
-    # }
+    #         'tol': 0.01,
+    #     }
     # },
-    # # No feature selection
+    # # No feature selection #TODO untested
     # 'NONE': {
     #     'class': None,
     #     'base_params': {}
-    # }
+    #     }
     }
-
-# feature_selectors_dict = { # WARNING delete
-#     'svm': SelectFromModel(LinearSVC(C=0.1, random_state=42, max_iter=2000)),
-#     'rf': SelectFromModel(RandomForestClassifier(n_estimators=100,
-#                                                 max_depth=5,
-#                                                 random_state=42),
-#                           threshold="median"),
-#     'logreg': SelectFromModel(LogisticRegression(penalty="l1",
-#                                                 solver="saga",
-#                                                 C=0.1,
-#                                                 max_iter=2000,
-#                                                 random_state=42)),
-#     'xgb': SelectFromModel(XGBClassifier(n_estimators=100,
-#                                          max_depth=3,
-#                                          random_state=42)),
-#     'gb': SelectFromModel(GradientBoostingClassifier(random_state=42)),
-#     'knn': SelectKBest(f_classif, k=20),  # Using statistical test instead of RFECV
-#     'ada': SelectFromModel(AdaBoostClassifier(n_estimators=50, random_state=42))
-# }
-
 
 ### ESTIMATE BEST MODELS WITH BASIC SETTINGS ###########################################################################
 # Initialise dict to store best results per model
@@ -374,62 +356,71 @@ top_model_scores = {}
 
 #  WARNING override version vs using config for testing - delete  after testing:
 n_models_to_tune = 2
-# Logistic_regression = True
-# SVM = True
-# Random_forest = True
-# AdaBoost = True
-# Gradient_boosting = True
-# XGBoost = True
-# KNN = True
-
-Logistic_regression = False
-SVM = False
+Logistic_regression = True
+SVM = True
 Random_forest = True
-AdaBoost = False
-Gradient_boosting = False
-XGBoost = False
-KNN = False
+AdaBoost = True
+Gradient_boosting = True
+XGBoost = True
+KNN = True
+
+# Logistic_regression = False
+# SVM = False
+# Random_forest = True
+# AdaBoost = False
+# Gradient_boosting = False
+# XGBoost = False
+# KNN = False
 
 # Dictionary to store the highest performing models and their feature selection methods
 best_models_fs = {}
 
+# List to store results from each model basic training
+basic_results = []
 # Outline each model and perform the basic training function to evaluate performance of each
 if basic_training:
     # Logistic Regression
     if Logistic_regression:
         log_reg = LogisticRegression(solver='saga', tol=1e-4, max_iter=1500)
-        basic_train(log_reg, X_train, y_train, 'Logistic Regression', top_model_scores, feature_selectors, feature_selection, threshold)
+        lr_results = basic_train(log_reg, X_train, y_train, 'Logistic Regression', top_model_scores, feature_selectors, feature_selection, threshold)
+        basic_results.append(lr_results)
 
     # SVM
     if SVM:
         svc_clf = SVC()
-        basic_train(svc_clf, X_train, y_train, 'Support Vector Classifier', top_model_scores, feature_selectors, feature_selection, threshold)
+        svm_results = basic_train(svc_clf, X_train, y_train, 'Support Vector Classifier', top_model_scores, feature_selectors, feature_selection, threshold)
+        basic_results.append(svm_results)
 
     # Random Forest
     if Random_forest:
         rnd_clf = RandomForestClassifier(random_state=42)
-        basic_train(rnd_clf, X_train, y_train, 'RandomForestClassifier', top_model_scores, feature_selectors, feature_selection, threshold)
+        rf_results = basic_train(rnd_clf, X_train, y_train, 'RandomForestClassifier', top_model_scores, feature_selectors, feature_selection, threshold)
+        basic_results.append(rf_results)
 
     # AdaBoost
     if AdaBoost:
         dt_clf_ada = DecisionTreeClassifier()
         ada_clf = AdaBoostClassifier(estimator=dt_clf_ada, random_state=42)
-        basic_train(ada_clf, X_train, y_train, "AdaBoost Classifier", top_model_scores, feature_selectors, feature_selection, threshold)
+        ada_results = basic_train(ada_clf, X_train, y_train, "AdaBoost Classifier", top_model_scores, feature_selectors, feature_selection, threshold)
+        basic_results.append(ada_results)
 
     # GradientBoosting
     if Gradient_boosting:
         gdb_clf = GradientBoostingClassifier(random_state=42, subsample=0.8)
-        basic_train(gdb_clf, X_train, y_train, "GradientBoosting Classifier", top_model_scores, feature_selectors, feature_selection, threshold)
+        gb_results = basic_train(gdb_clf, X_train, y_train, "GradientBoosting Classifier", top_model_scores, feature_selectors, feature_selection, threshold)
+        basic_results.append(gb_results)
 
     # XGBoost
     if XGBoost:
         xgb_clf = XGBClassifier(verbosity=0)
-        basic_train(xgb_clf, X_train, y_train, "XGBoost Classifier", top_model_scores, feature_selectors, feature_selection, threshold)
+        xgb_results = basic_train(xgb_clf, X_train, y_train, "XGBoost Classifier", top_model_scores, feature_selectors, feature_selection, threshold)
+        basic_results.append(xgb_results)
 
     # KNN
     if KNN:
         knn_clf = KNeighborsClassifier()
-        basic_train(knn_clf, X_train, y_train, 'K-Nearest Neighbors Classifier', top_model_scores, feature_selectors, feature_selection, threshold)
+        knn_results = basic_train(knn_clf, X_train, y_train, 'K-Nearest Neighbors Classifier', top_model_scores, feature_selectors, feature_selection, threshold)
+        basic_results.append(knn_results)
 
     # Make dataframe of model scores and print results
     scores = pd.DataFrame.from_dict(top_model_scores,
@@ -439,6 +430,11 @@ if basic_training:
     # Print the top results for each model
     print("\nBest results per model:")
     print(scores.head(len(scores)))
+
+    ### Make a summary of feature selection method performance
+    all_results_df = pd.concat(basic_results, ignore_index=True) # Combine results
+    all_results_sorted = all_results_df.sort_values(by=['Selector', 'Model']).reset_index(drop=True)
+    plot_fs_performance(all_results_sorted, graphs_dir) # Plot
 
     ### Determine the best performing models to take to the tuning phase
     # Extract best model and feature selection from top_model_scores
@@ -501,8 +497,15 @@ def objective(params):
     if selector_type == 'NONE':
         selector = 'passthrough'
     else:
-        # Merge base parameters with tuned parameters
+        # Merge base parameters with tuned parameters - the base_params are overwritten by the hyperopt fs_params
         all_params = {**selector_config['base_params'], **fs_params}
+
+        ### Convert feature selection parameters to integers where required
+            # Note: same conversion is done for different selector types so check all expect integers
+        if 'min_features_to_select' in all_params:
+            all_params['min_features_to_select'] = int(all_params['min_features_to_select'])
+
+        # Update params
         selector = selector_config['class'](**all_params)
 
     ### Build the classifier based on provided type and convert parameters that must be integers (hyperopt returns floats) if necessary
@@ -585,16 +588,21 @@ selector_param_spaces = { # Note: for new data, values may need to be tweaked as
         'threshold': hp.choice('xgb_threshold', ['median', 0.5, 1.0])
     },
     'RFECV_LR': {
-        'step': hp.uniform('rfecv_lr_step', 0.01, 0.3),
-        'min_features_to_select': hp.quniform('rfecv_lr_min_feat', 5, 30, 1)
+        'step': hp.choice('rfecv_lr_step', [0.01, 0.1, 1]),
+        'cv' : hp.choice('refcv_cv', [StratifiedKFold(5), StratifiedKFold(10)]),
+        'scoring' : hp.choice('refcv_scoring', ['f1', 'accuracy', 'r2', 'roc_auc']),
+
     },
     'RFECV_RF': {
-        'step': hp.uniform('rfecv_rf_step', 0.01, 0.3),
-        'min_features_to_select': hp.quniform('rfecv_rf_min_feat', 5, 30, 1)
+        'step': hp.choice('rfecv_lr_step', [0.01, 0.1, 1]),
+        'cv' : hp.choice('refcv_cv', [StratifiedKFold(5), StratifiedKFold(10)]),
+        'scoring' : hp.choice('refcv_scoring', ['f1', 'accuracy', 'roc_auc']),
     },
     'RFECV_XGB': {
-        'step': hp.uniform('rfecv_xgb_step', 0.01, 0.3),
-        'min_features_to_select': hp.quniform('rfecv_xgb_min_feat', 5, 30, 1)
+        'step': hp.choice('rfecv_lr_step', [0.01, 0.1, 1]),
+        'cv' : hp.choice('refcv_cv', [StratifiedKFold(5), StratifiedKFold(10)]),
+        'scoring' : hp.choice('refcv_scoring', ['f1', 'accuracy'
+            , 'roc_auc']),
     },
     'SFM_LR': {
         'threshold': hp.choice('sfm_lr_threshold', [None, 'median', 'mean', 0.1, 0.5, 1.0])
@@ -606,13 +614,25 @@ selector_param_spaces = { # Note: for new data, values may need to be tweaked as
         'threshold': hp.choice('sfm_las_threshold', [None, 'median', 'mean', 0.1, 0.5, 1.0])
     },
     'SFS_LR': {
-        'n_features_to_select': hp.quniform('sfs_lr_n_features', 5, min(50, X_train.shape[1]), 1)
+        'n_features_to_select': hp.quniform('sfs_lr_n_features', 5, min(50, X_train.shape[1]), 1),
+        'tol': hp.uniform('sfs_tol', 1e-3, 0.01),
+        'direction': hp.choice('sfs_direction', ['forward', 'backward']),
+        'scoring' : hp.choice('refcv_scoring', ['f1', 'accuracy', 'roc_auc' 'r2']),
+        'cv' : hp.choice('refcv_cv', [StratifiedKFold(5), StratifiedKFold(10)])
     },
     'SFS_LSVC': {
-        'n_features_to_select': hp.quniform('sfs_lsvc_n_features', 5, min(50, X_train.shape[1]), 1)
+        'n_features_to_select': hp.quniform('sfs_lsvc_n_features', 5, min(50, X_train.shape[1]), 1),
+        'tol': hp.uniform('sfs_tol', 1e-3, 0.01),
+        'direction': hp.choice('sfs_direction', ['forward', 'backward']),
+        'scoring' : hp.choice('refcv_scoring', ['f1', 'accuracy', 'roc_auc', 'r2']),
+        'cv' : hp.choice('refcv_cv', [StratifiedKFold(5), StratifiedKFold(10)])
     },
     'SFS_XGB': {
-        'n_features_to_select': hp.quniform('sfs_xgb_n_features', 5, min(50, X_train.shape[1]), 1)
+        'n_features_to_select': hp.quniform('sfs_xgb_n_features', 5, min(50, X_train.shape[1]), 1),
+        'tol': hp.uniform('sfs_tol', 1e-3, 0.01),
+        'direction': hp.choice('sfs_direction', ['forward', 'backward']),
+        'scoring' : hp.choice('refcv_scoring', ['f1', 'accuracy', 'roc_auc']),
+        'cv' : hp.choice('refcv_cv', [StratifiedKFold(5), StratifiedKFold(10)])
     },
 }
 
@@ -758,7 +778,7 @@ with mlflow.start_run(run_name=hyperopt_name) as run:
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=3, #todo: increase on a better machine # IMPROVE this and other settings/bools could be set using a config file
+        max_evals=2, #todo: increase on a better machine # IMPROVE this and other settings/bools could be set using a config file
         trials=Trials()
     )
     # Print run id
@@ -796,6 +816,10 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Get parameters for the classifier and feature selector
     fs_params = best_config.get('fs_params', {})  # Feature selector params
+    # Convert to integers where needed
+    if 'min_features_to_select' in fs_params:
+        fs_params['min_features_to_select'] = int(fs_params['min_features_to_select'])
+    # Assign best parameters for the model
     best_params = {k: v for k, v in best_config.items() if k not in ['type', 'fs_params']}
 
     # Get selector configuration
@@ -808,7 +832,6 @@ with mlflow.start_run(run_name=run_name) as run:
     else:
         all_params = {**selector_config['base_params'], **fs_params}
         selector = selector_config['class'](**all_params)
-
 
     # Log the best hyperparameters
     mlflow.log_params(best_config)
@@ -969,7 +992,7 @@ with mlflow.start_run(run_name=run_name) as run:
 # (which is also available in the server) but renamed here for easier access based on the suffix defined in the config
 # file.
 # Bool to set whether to copy the runs to the final output subdirectory - for testing only this can be disabled
-track_final = True #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful
+track_final = False #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful #todo re-enable
 if track_final:
     print("\'track_final\' has been enabled, so the model information will be copied to ./model_output for easier viewing.")
 
