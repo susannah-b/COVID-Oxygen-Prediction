@@ -605,13 +605,13 @@ selector_param_spaces = { # Note: for new data, values may need to be tweaked as
             , 'roc_auc']),
     },
     'SFM_LR': {
-        'threshold': hp.choice('sfm_lr_threshold', [None, 'median', 'mean', 0.1, 0.5, 1.0])
+        'threshold': hp.choice('sfm_lr_threshold', [None, 'median', 'mean', 1e-6, 1e-5, 1e-4])
     },
     'SFM_SVC': {
-        'threshold': hp.choice('sfm_svc_threshold', [None, 'median', 'mean', 0.1, 0.5, 1.0])
+        'threshold': hp.choice('sfm_svc_threshold', [None, 'median', 'mean', 1e-6, 1e-5, 1e-4])
     },
     'SFM_LAS': {
-        'threshold': hp.choice('sfm_las_threshold', [None, 'median', 'mean', 0.1, 0.5, 1.0])
+        'threshold': hp.choice('sfm_las_threshold', [None, 'median', 'mean', 1e-6, 1e-5, 1e-4])
     },
     'SFS_LR': {
         'n_features_to_select': hp.quniform('sfs_lr_n_features', 5, min(50, X_train.shape[1]), 1),
@@ -992,7 +992,7 @@ with mlflow.start_run(run_name=run_name) as run:
 # (which is also available in the server) but renamed here for easier access based on the suffix defined in the config
 # file.
 # Bool to set whether to copy the runs to the final output subdirectory - for testing only this can be disabled
-track_final = False #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful #todo re-enable
+track_final = True #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful
 if track_final:
     print("\'track_final\' has been enabled, so the model information will be copied to ./model_output for easier viewing.")
 
