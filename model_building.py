@@ -68,15 +68,20 @@ parser.add_argument(
     help="Run the script with a predetermined run name; only necessary for use in the pipeline.py script. If "
          "running the script standalone the --run_name parameter is not used."
 )
+parser.add_argument(
+    "--from_pipeline",
+    action="store_true",
+    help="Indicates the script is being called from pipeline.py"
+)
 args = parser.parse_args()
 run_name = args.run_name
 
 #### READ CONFIG FILE ##################################################################################################
 # Set config path based on whether the script is run standlone or part of pipeline.py (config moved to 'inputs')
-if __name__ == "__main__":
+if not args.from_pipeline:
     config_path = Path("config.yaml")
 else:
-    config_path = Path(f"inputs/{run_name}/config.yaml")
+    config_path = Path(f"inputs/ML/{run_name}/config.yaml")
 
 # Read config file
 with open(config_path, "r") as f:
@@ -110,16 +115,16 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 180)
 
 # Create output directories for the data
-if __name__ == "__main__": # If calling as a standalone script, save to the current working directory
+if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
     data_dir = 'training_data' # Combine with other training graphs if using training data
 else: # Put into input storage folder to prevent overwriting
-    data_dir = f'inputs/{run_name}/training_data'
+    data_dir = f'inputs/ML/{run_name}/training_data'
 
 # Create output directory for the graphs
-if __name__ == '__main__': # If calling as a standalone script, save to the current working directory
+if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
     graphs_dir = 'training_graphs' # Combine with other training graphs if using training data
 else: # Put into input storage folder to prevent overwriting
-    graphs_dir = f'inputs/{run_name}/training_graphs'
+    graphs_dir = f'inputs/ML/{run_name}/training_graphs'
 
 ### Read in data
 # Train
@@ -742,7 +747,7 @@ else:
 mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 
 ### CREATE RUN NAME ####################################################################################################
-if __name__ == "__main__":
+if not args.from_pipeline:
      # Set run name - when run as part of pipeline.py instead, this is defined as an argument. Here it needs to be set so the model_output folder can be made, etc.
      timestamp = datetime.now().strftime("%m%d-%H%M%S")
      run_number = config["general"]["run_number"]
@@ -986,7 +991,7 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     # Determine file locations
     final_folder = Path("mlruns") / final_exp_id / final_run_id
     ml_artifacts = Path("mlartifacts") / final_exp_id / final_run_id
-    output_folder = Path("model_output") / run_name
+    output_folder = Path("model_output/ML") / run_name
     output_artifacts = output_folder
     data_folder = Path(data_dir)
     graph_folder = Path(graphs_dir)

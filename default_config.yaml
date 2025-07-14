@@ -3,6 +3,11 @@
 
 # Note: some settings primarily used for testing remain in the Python scripts which can be changed as needed.
 
+# Which model to build:
+traditional: True
+neural_network: True
+  # Used in the wrapper script to determine which model type to build
+
 general:
   run_number: 1
     # Automatically changed after each model run (either by pipeline.py or standalone script run). 
@@ -34,6 +39,8 @@ data_preprocessing:
     # Determine whether to impute the data or not; if running standalone scripts (not in pipeline.py) this can be switched off for repeat runs
   drop_metadata: False
     # Determine whether to drop the metadata; i.e. only use proteomics data. 
+  num_datasets_imputation: 10
+  iterations: 10
 
 model_building:
   var_threshold: 1e-10
@@ -42,6 +49,11 @@ model_building:
     # Whether to do feature selection or not - applies to all steps (basic training, hyperparameter exploration, and final model training
   basic_training: True
     # BWhether to go through the training of basic models to determine the most promising candidates/feature selectors (alternative is to set certain methods below)
+  specify_model:
+    # If basic_training is disabled, use the model type/feature selector specified here
+    # See the output tables of model_building.py for the appropriate format
+    model_type: "RandomForestClassifier"
+    fs: "SFM_RF"
   models_to_test:
     # Models to test as part of basic_train; determines which will be carried to the tuning stage
     Logistic_regression: True
@@ -53,4 +65,17 @@ model_building:
     KNN: True
   n_models_to_tune: 2
     # The top N models - change this as needed
+  max_evals: 100 # Set to 100 for testing but will likely need to be increased for real training runs
+    # Change this as needed
+  track_final: true 
+    # Whether to copy the model_output to the designated folder for easier browsing
+
+
+
+neural_network:
+  # Configurations pertaining to the neural network script
+  input_data: 
+    # Set folder as required; should be a 'training_data' folder from the traditional model output/preliminary scripts (X_train, y_train, X_test, y_test .csv files)
+
+
 

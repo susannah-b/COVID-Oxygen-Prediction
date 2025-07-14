@@ -54,17 +54,22 @@ parser.add_argument(
     help="Run the script with a predetermined run name; only necessary for use in the pipeline.py script. If "
          "running the script standalone the --run_name parameter is not used."
 )
+parser.add_argument(
+    "--from_pipeline",
+    action="store_true",
+    help="Indicates the script is being called from pipeline.py"
+)
 args = parser.parse_args()
 run_name = args.run_name
 
 #### READ CONFIG FILE ##################################################################################################
 # Set config path based on whether the script is run standlone or part of pipeline.py (config moved to 'inputs')
-if __name__ == "__main__":
+if not args.from_pipeline:
     config_path = Path("config.yaml")
 else:
     config_path = Path(f"inputs/{run_name}/config.yaml")
 
-# Create config fil if it doesn't exist
+# Create config file if it doesn't exist
 default_config = Path("default_config.yaml")
 if not os.path.exists(config_path):
     shutil.copy2(default_config, config_path)
@@ -106,7 +111,7 @@ isaric = pd.read_csv(isaric_file, index_col=0) # Avoid creating Unnamed: 0 colum
 phosp = pd.read_excel(phosp_file)
 
 # Create output directories for the data
-if __name__ == '__main__': # If calling as a standalone script, save to the current working directory
+if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
     training_data = 'training_data' # Combine with other training graphs if using training data
     validation_data = 'validation_data' # Combine with other validation graphs if using training data
     os.makedirs(training_data, exist_ok=True)
@@ -118,7 +123,7 @@ else: # Put into input storage folder to prevent overwriting
     os.makedirs(validation_data, exist_ok=True)
 
 # Create output directory for the graphs
-if __name__ == '__main__': # If calling as a standalone script, save to the current working directory
+if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
     training_graphs = 'training_graphs' # Combine with other training graphs if using training data
     validation_graphs = 'validation_graphs' # Combine with other validation graphs if using training data
     os.makedirs(training_graphs, exist_ok=True)
@@ -126,8 +131,8 @@ if __name__ == '__main__': # If calling as a standalone script, save to the curr
 else: # Put into input storage folder to prevent overwriting
     training_graphs = f'inputs/{run_name}/training_graphs'
     validation_graphs = f'inputs/{run_name}/validation_graphs'
-    os.makedirs(training_data, exist_ok=True)
-    os.makedirs(validation_data, exist_ok=True)
+    os.makedirs(training_graphs, exist_ok=True)
+    os.makedirs(validation_graphs, exist_ok=True)
 
 # Quant data preprocessing
 quant.columns = quant.iloc[0] # Set protein names (now row 0) as column headers

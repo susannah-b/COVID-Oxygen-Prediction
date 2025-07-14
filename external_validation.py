@@ -27,15 +27,20 @@ parser.add_argument(
     help="Run the script with a predetermined run name; only necessary for use in the pipeline.py script. If "
          "running the script standalone the --run_name parameter is not used."
 )
+parser.add_argument(
+    "--from_pipeline",
+    action="store_true",
+    help="Indicates the script is being called from pipeline.py"
+)
 args = parser.parse_args()
 run_name = args.run_name # Note this is for the original run, not the validation run (which has _validation appended)
 
 #### READ CONFIG FILE ##################################################################################################
 # Set config path based on whether the script is run standlone or part of pipeline.py (config moved to 'inputs')
-if __name__ == "__main__":
+if not args.from_pipeline:
     config_path = Path("config.yaml")
 else:
-    config_path = Path(f"inputs/{run_name}/config.yaml")
+    config_path = Path(f"inputs/ML/{run_name}/config.yaml")
 
 # Read config file
 with open(config_path, "r") as f:
@@ -48,16 +53,16 @@ track_final = config['model_building']['track_final']
 
 ### LOAD ISARIC DATA ###################################################################################################
 # Set input directories
-if __name__ == "__main__": # If calling as a standalone script, save to the current working directory
+if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
     data_dir = 'validation_data' # Combine with other validation graphs if using training data
 else: # Put into input storage folder to prevent overwriting
-    data_dir = f'inputs/{run_name}/validation_data'
+    data_dir = f'inputs/ML/{run_name}/validation_data'
 
 # Create output directory for the graphs
-if __name__ == '__main__': # If calling as a standalone script, save to the current working directory
+if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
     graphs_dir = 'validation_graphs' # Combine with other validation graphs if using training data
 else: # Put into input storage folder to prevent overwriting
-    graphs_dir = f'inputs/{run_name}/validation_graphs'
+    graphs_dir = f'inputs/ML/{run_name}/validation_graphs'
 
 dataset = "ISARIC"
 X_path = Path(__file__).parent / data_dir / f"{dataset}_X.csv" # Note: Although the ISARIC data as saved as 'train' data, this is actually the wholedataset for validation/testing
@@ -82,14 +87,14 @@ else:
 mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 
 ### LOAD MODEL #########################################################################################################
-if __name__ == "__main__":
+if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "1_0710-1129_400_eval_all_time_comparison" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "4_0714-174323_testing_pipeline" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
 # Load model by run ID
-model_output = f"model_output/{model_name}"
+model_output = f"model_output/ML/{model_name}"
 model_path = f"{model_output}/artifacts/best_model"
 model = mlflow.sklearn.load_model(model_path)
 
@@ -191,7 +196,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
 # (which is also available in the server) but renamed here for easier access based on the original model name.
 # Bool to set whether to copy the runs to the final output subdirectory - for testing only this can be disabled
 if track_final: #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful
-    print(f"\'track_final\' has been enabled, so the model information will be copied to ./model_output under the original experiment {model_name} for easier viewing.")
+    print(f"\'track_final\' has been enabled, so the model information will be copied to ./model_output/ML under the original experiment {model_name} for easier viewing.")
 
     # Determine file locations
     val_folder = Path("mlruns")  / val_exp_id / val_run_id

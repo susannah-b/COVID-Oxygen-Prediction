@@ -30,12 +30,17 @@ parser.add_argument(
     help="Run the script with a predetermined run name; only necessary for use in the pipeline.py script. If "
          "running the script standalone the --run_name parameter is not used."
 )
+parser.add_argument(
+    "--from_pipeline",
+    action="store_true",
+    help="Indicates the script is being called from pipeline.py"
+)
 args = parser.parse_args()
 run_name = args.run_name
 
 #### READ CONFIG FILE ##################################################################################################
 # Set config path based on whether the script is run standlone or part of pipeline.py (config moved to 'inputs')
-if __name__ == "__main__":
+if not args.from_pipeline:
     config_path = Path("config.yaml")
 else:
     config_path = Path(f"inputs/{run_name}/config.yaml")
@@ -49,12 +54,12 @@ validate = config['general']['validate'] # Whether to make the Surrey dataset co
 impute = config['data_preprocessing']['impute'] # Whether to impute (vs load a pre-imputed file)
 drop_metadata = config['data_preprocessing']['drop_metadata'] # Whether to drop the metadata from the model
 num_datasets = config['data_preprocessing']['num_datasets_imputation'] # num_datasets for miceforest imputation
-iterations = config['data_preprocessing']['num_datasets_imputation'] # iterations for miceforest imputation
+iterations = config['data_preprocessing']['iterations_imputation'] # iterations for miceforest imputation
 
 ### PREPARE THE DATA ###################################################################################################
 
 # Create output directories for the data
-if __name__ == "__main__": # If calling as a standalone script, save to the current working directory
+if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
     training_data = 'training_data' # Combine with other training graphs if using training data
     validation_data = 'validation_data' # Combine with other validation graphs if using training data
 else: # Put into input storage folder to prevent overwriting
@@ -62,7 +67,7 @@ else: # Put into input storage folder to prevent overwriting
     validation_data = f'inputs/{run_name}/validation_data'
 
 # Create output directory for the graphs
-if __name__ == '__main__': # If calling as a standalone script, save to the current working directory
+if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
     training_graphs = 'training_graphs' # Combine with other training graphs if using training data
     validation_graphs = 'validation_graphs' # Combine with other validation graphs if using training data
 else: # Put into input storage folder to prevent overwriting
