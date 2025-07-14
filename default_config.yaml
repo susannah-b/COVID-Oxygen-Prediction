@@ -1,0 +1,56 @@
+# Config file for the oxygen model. Do not alter this file - make a copy called config.yaml or run data_preprocessing.py/pipeline.py to initialise
+# a copy with the default settings.
+
+# Note: some settings primarily used for testing remain in the Python scripts which can be changed as needed.
+
+general:
+  run_number: 1
+    # Automatically changed after each model run (either by pipeline.py or standalone script run). 
+    # Can be changed to any number without consequence and reset as needed - used just to track runs.
+  run_suffix: ''
+    # Used alongside run_number to set the model name. Can be modified to any string; it's recommended to use this to describe 
+    # the model run, e.g. '400_evals_no_validation'
+  validate: True
+    # Bool to determine whether to make the Surrey dataset validation-compatible (if False, can ignore ISARIC data). Switch on if validating.
+  host: "127.0.0.1"
+  port: 8080
+    # Host and port for local tracking serverfor MLflow
+  training_meta_cols: None
+
+feature_engineering:
+  day_zero: True
+    # Determine whether to filter to day zero samples only. For better results, disable if metadata is being dropped (see below). 
+  text_features:
+    # The four text-based comma-separated features included in the dataset. Adds information but also high dimensionality. Turn on to include.
+    Medication_48hr: True
+    Pre-symptoms: True
+    Comorbidity: True
+    Regular_meds: True
+  min_count: 3
+    # Minimum count for text features to be included in the dataset. If set to 0, all text features will be included.
+
+data_preprocessing:
+  impute: True
+    # Determine whether to impute the data or not; if running standalone scripts (not in pipeline.py) this can be switched off for repeat runs
+  drop_metadata: False
+    # Determine whether to drop the metadata; i.e. only use proteomics data. 
+
+model_building:
+  var_threshold: 1e-10
+    # Change this to change the threshold for variance filtering
+  feature_selection: True
+    # Whether to do feature selection or not - applies to all steps (basic training, hyperparameter exploration, and final model training
+  basic_training: True
+    # BWhether to go through the training of basic models to determine the most promising candidates/feature selectors (alternative is to set certain methods below)
+  models_to_test:
+    # Models to test as part of basic_train; determines which will be carried to the tuning stage
+    Logistic_regression: True
+    SVM: True
+    Random_forest: True
+    AdaBoost: True
+    Gradient_boosting: True
+    XGBoost: True
+    KNN: True
+  n_models_to_tune: 2
+    # The top N models - change this as needed
+
