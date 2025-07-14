@@ -44,6 +44,7 @@ with open(config_path, "r") as f:
 # Set parameters for this file:
 host = config['general']['host']
 port = config['general']['port']
+track_final = config['model_building']['track_final']
 
 ### LOAD ISARIC DATA ###################################################################################################
 # Set input directories
@@ -189,8 +190,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
 # Move and rename runs to a new directory for easier examination - results are copied from the MLflow tracking folder
 # (which is also available in the server) but renamed here for easier access based on the original model name.
 # Bool to set whether to copy the runs to the final output subdirectory - for testing only this can be disabled
-track_final = True #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful
-if track_final: #todo add to config, and for m_b
+if track_final: #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful
     print(f"\'track_final\' has been enabled, so the model information will be copied to ./model_output under the original experiment {model_name} for easier viewing.")
 
     # Determine file locations

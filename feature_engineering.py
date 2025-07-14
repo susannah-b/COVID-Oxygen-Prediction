@@ -27,7 +27,7 @@ import yaml
 import shutil
 from functions import check_abnormal_SIDs, calculate_overlaps, check_columns, check_empty_cols, \
     plot_row_missingness, plot_missingness_msno, investigate_null, remaining_meta, categorise_cols, numerical_check_nan, \
-    plot_class_distribution
+    plot_class_distribution, text_to_binary, replace_values
 
 # Set pandas to display all columns and longer rows # IMPROVE remove in final version
 pd.set_option('display.max_columns', None)
@@ -74,13 +74,28 @@ with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 
 # Set parameters for this file:
-validate = config['general']['validate']
-day_zero = config['feature_engineering']['day_zero']
+validate = config['general']['validate'] # Whether to make the Surrey dataset compatible with the validation set and produce relevant files
+day_zero = config['feature_engineering']['day_zero'] # Whether to only include D0 samples
+medication_48hr = config['feature_engineering']['text_features']['Medication_48hr'] # Whether to expand the column from csv text into binary columns for each value
+pre_symptoms = config['feature_engineering']['text_features']['Pre-symptoms'] # Whether to expand the column from csv text into binary columns for each value
+comorbidity = config['feature_engineering']['text_features']['Comorbidity'] # Whether to expand the column from csv text into binary columns for each value
+regular_meds = config['feature_engineering']['text_features']['Regular_meds'] # Whether to expand the column from csv text into binary columns for each value
+min_count = config['feature_engineering']['min_count'] # Minimum frequency of a csv value in the column to convert it into a binary column (otherwise excluded from the dataset)
+
+# Override text to binary expansions if validating
+# IMPROVE currently I don't have equivalent columns set for isaric so we switch off these settings if validation is on.
+#  Can be added later but requires finding/renaming matching columns if each t2b bool is enabled, and updating the rest of scripts/other scripts to acknowledge the added cols
+if validate:
+    medication_48hr = False
+    pre_symptoms = False
+    comorbidity = False
+    regular_meds = False
+    print("\nDisabling text-to-binary conversion due to validation being set to True.")
 
 ########################################################################################################################
 # todo - change cwd to github folder; currently assumes it's in there already. maybe for other scripts. including pipeline.py
 
-# Read in data
+# Read in data #IMPROVE avoid hardcoding
 quant_file = Path(__file__).parent / "Surrey_Files" / "KR_Covid_DIA_Pt_gene_Serum30_Report_Protein Quant (Pivot).xls"
 s_meta_file = Path(__file__).parent / "Surrey_Files" / "Surrey_Metadata_master_spreadsheet_130622_edit2.csv"
 isaric_file = Path(__file__).parent / "ISARIC_Files" / "ISARIC.csv"
@@ -287,45 +302,40 @@ calculate_overlaps(quant_surrey.index, isaric.index, sample_inves_3)
 ### COMBINE ISARIC AND PHOSP METADATA ##################################################################################
 #  Some samples are covered in each, and the PHOSP data takes samples at admission point which is more comparable to
 #  Surrey data and therefore preferred
-if validate:
-    phosp = phosp[phosp['redcap_event_name'] == 'Hospital Discharge'] # Filter to 'Hospital Discharge' time points only
-    isaric = isaric.drop(columns='age') # Drop to avoid duplicate columns names when merging
-    isaric = isaric.reset_index().rename(columns={'index': 'SID'}) # Move index to column so it can be preserved and set later
-    isaric_all = pd.merge(isaric, phosp, on='phosp_id', how='left') # Merge PHOSP and ISARIC
-    isaric_all = isaric_all.set_index('SID')
+phosp = phosp[phosp['redcap_event_name'] == 'Hospital Discharge'] # Filter to 'Hospital Discharge' time points only
+isaric = isaric.drop(columns='age') # Drop to avoid duplicate columns names when merging
+isaric = isaric.reset_index().rename(columns={'index': 'SID'}) # Move index to column so it can be preserved and set later
+isaric_all = pd.merge(isaric, phosp, on='phosp_id', how='left') # Merge PHOSP and ISARIC
+isaric_all = isaric_all.set_index('SID')
 
 ### COMBINE QUANT AND META DATA ########################################################################################
 # Surrey
 s_meta_mod = s_meta.set_index('Sample Modified') # Define new index with modified sample names to match quant
+s_meta_mod.columns = s_meta_mod.columns.str.replace(r"(Plasma - Ig[AGM] Anti-RBD Concentration \(ng/).*", r"\1l)",
+                                                    regex=True) # Adjust some faulty column names for Surrey (have an unknown symbol)
+s_meta_mod.columns = s_meta_mod.columns.str.strip()  # Remove trailing whitespace
 merged_surrey = s_meta_mod.join(quant_surrey, how='inner')
 merged_surrey.to_csv(f"{training_data}/Surrey_data_combined_all.csv") # Note this has the unmodified column names (e.g. whitespace)
 # ISARIC
 merged_isaric = isaric_all.join(quant_isaric, how='inner')
 merged_isaric.to_csv(f"{validation_data}/ISARIC_data_combined_all.csv")
 
-### CLEAN UP COLUMNS ###################################################################################################
+### DROP COLUMNS FROM TRAINING DATA ####################################################################################
 # Remove whitespace surrounding columns
-merged_surrey.columns = merged_surrey.columns.str.strip()
+merged_surrey.columns = merged_surrey.columns.str.strip() # Already done for Surrey metadata but added for quant data
 merged_isaric.columns = merged_isaric.columns.str.strip()
 
-# Some Surrey specific investigation and cleaning
-if not validate:
-    # Adjust some faulty column names for Surrey (have an unknown symbol):
-    merged_surrey.columns = merged_surrey.columns.str.replace(r"(Plasma - Ig[AGM] Anti-RBD Concentration \(ng/).*", r"\1l)",
-                                                regex=True)
+# Change Sample column to be the updated SIDs currently stored as row indexes (so can reset index later)
+# merged['Sample'] = merged.index # Note I later remove this column but left this in the code in case it's useful later # IMPROVE - remove if not needed
+if sample_inves_4:
+    print("Is the data frame the length we expect (# of overlapping samples)?")
+    print(len(merged_surrey))  # Answer: Yes
 
-    # Change Sample column to be the updated SIDs currently stored as row indexes (so can reset index later)
-    # merged['Sample'] = merged.index # Note I later remove this column but left this in the code in case it's useful later # IMPROVE - remove if not needed
-
-    if sample_inves_4:
-        print("Is the data frame the length we expect (# of overlapping samples)?")
-        print(len(merged_surrey))  # Answer: Yes
-
-        # What columns might we want to remove from the metadata?
-        print("\nColumns in the Surrey metadata:")
-        print(merged_surrey.columns[0:71])
-        # TODO: List of columns I'm not sure on the meaning of, can I check? Might need to remove some if irrelevant
-        # 'Chol', 'Airway Disease', 'For escalation? (Y/N)', 'PBMC No Calculation', 'Saliva - untargeted metabolomics' (and 2 similar).
+    # What columns might we want to remove from the metadata?
+    print("\nColumns in the Surrey metadata:")
+    print(merged_surrey.columns[0:71])
+    # TODO: List of columns I'm not sure on the meaning of, can I check? Might need to remove some if irrelevant
+    # 'Chol', 'Airway Disease', 'For escalation? (Y/N)', 'PBMC No Calculation', 'Saliva - untargeted metabolomics' (and 2 similar).
 
 # List unecessary columns to remove from the Surrey dataset
 remove_cols = ['Sample', # Stored as row indexes
@@ -343,20 +353,16 @@ remove_cols = ['Sample', # Stored as row indexes
                'Hospital site', # TODO Possibly could impact care but I think a confounding feature? Maybe try with and without
                'MABRA ID', # Irrelevant
                'MABRA ID.1', # Irrelevant
-               'Medication taken in 48 hours prior to sample', # TODO Possibly could have useful info if mediction is shown to be related - investigate
-               'Nature of pre admission symptoms', # TODO might be useful for certain symptoms but for now removing for simplicity - but could do e.g. Chest pain Y/N from the data. This is likely shared with ISARIC.
-               'Other', # TODO certainly useful but for now removing for simplicity - but could extract related illnesses e.g. high risk for covid
                'Plasma 1', # Irrelevant
                'Plasma 2', # Irrelevant
                'Plasma 3', # Irrelevant
                'Pt MABRA ID', # Irrelevant
-               'Regular medications', # TODO also useful but skipping now for simplicity
-               'Saliva - untargeted metabolomics', # TODO not sure but think irrelevant. Has high missingness so filtered regardless.
+               'Saliva - untargeted metabolomics', # Not sure but think irrelevant. Has high missingness so filtered regardless.
                'Saliva 1', # Irrelevant
                'Saliva 2', # Irrelevant
                'Saliva 3', # Irrelevant
-               'Sebum - untargeted lipidomics', # TODO not sure but think irrelevant. Has high missingness so filtered regardless.
-               'Serum - targeted metaboloimcs', # TODO not sure but think irrelevant. Has high missingness so filtered regardless.
+               'Sebum - untargeted lipidomics', # Not sure but think irrelevant. Has high missingness so filtered regardless.
+               'Serum - targeted metaboloimcs', # Not sure but think irrelevant. Has high missingness so filtered regardless.
                'Serum 1', # Irrelevant
                'Serum 2', # Irrelevant
                'Serum 3', # Irrelevant
@@ -375,7 +381,17 @@ remove_cols = ['Sample', # Stored as row indexes
                #'Days_between' #TODO can drop this if doing D0 only - take out of remove_isaric if so
                ]
 
-# And drop them from the Surrey dataset
+# If not doing text to binary conversion (which is also switched off when validating), add to the removal list:
+if not medication_48hr:
+    remove_cols.append('Medication taken in 48 hours prior to sample')
+if not pre_symptoms:
+    remove_cols.append('Nature of pre admission symptoms')
+if not comorbidity:
+    remove_cols.append('Other')
+if not regular_meds:
+    remove_cols.append('Regular medications')
+
+# Drop the columns from the Surrey dataset
 merged_surrey = merged_surrey.drop(columns=remove_cols)
 
 # Remove Surrey columns that are incompatible with the ISARIC validation set (i.e. not found in both)
@@ -392,11 +408,65 @@ remove_isaric = ['Chol', # Unsure on this columns meaning, but I can't see anyth
                  'Survived Admission', # Couldn't find relevant column in ISARIC data
                  'Weight (kg)', # Exists in PHOSP but is NaN for all
                  'Days_between' # Not relevant as only doing the first time point (day 1/admission where specific)
+                 # WARNING: If I do decide to include some texttobinary (see below) columns in the validation set, edit this
                  ]
 
 if validate:
     merged_surrey = merged_surrey.drop(columns=remove_isaric)
 
+### HANDLE TEXT COLUMNS ################################################################################################
+# Some columns have comma-separated values in a list for each cell. These can be split up into binary Y/N for each, but
+# it adds high dimensionality to the data. Therefore a bool has been set up to optionally include to examine if
+# inclusion helps or hinders results.
+added_metadata = 0 # Tracks added metadata columns vs original dataset, so more can be added
+# IMPROVE: As noted above, only do this section if not validating as I haven't yet identified the equivalent columns in ISARIC, and want to test it with Surrey to see which columns (survive FS) are worth finding and converting.
+### Clean up typos in the columns
+typos_path = Path("typos.yaml")
+with open(typos_path, "r") as f:
+    typos = yaml.safe_load(f)
+
+# Medications
+if medication_48hr:
+    typos_meds = typos['medication_48hr']
+    for typo, fix, in typos_meds.items():
+        merged_surrey = replace_values(merged_surrey, 'Medication taken in 48 hours prior to sample', typo, fix)
+# Symptoms prior to admission
+if pre_symptoms:
+    typos_symp = typos['pre_symptoms']
+    for typo, fix, in typos_symp.items():
+        merged_surrey = replace_values(merged_surrey, 'Nature of pre admission symptoms', typo, fix)
+# Other diseases
+if comorbidity:
+    typos_como = typos['comorbidity']
+    for typo, fix, in typos_como.items():
+        merged_surrey = replace_values(merged_surrey, 'Other', typo, fix)
+# Regular medications
+if regular_meds:
+    typos_regs = typos['regular_meds']
+    for typo, fix, in typos_regs.items():
+        merged_surrey = replace_values(merged_surrey, 'Regular medications', typo, fix)
+
+# Clean and split strings for each text column in the surrey data
+if medication_48hr:
+    merged_surrey, added_cols = text_to_binary(merged_surrey, 'Medication taken in 48 hours prior to sample', 'Medication_48hr', training_data, min_count)
+    added_metadata += (added_cols - 1) # -1 due to dropping of original column (note that if used in future to represent actual added columns and not the change in columns, +1 needs to be added)
+if pre_symptoms:
+    merged_surrey, added_cols = text_to_binary(merged_surrey, 'Nature of pre admission symptoms', 'Pre-symptoms', training_data, min_count)
+    added_metadata += (added_cols - 1)
+if comorbidity:
+    merged_surrey, added_cols = text_to_binary(merged_surrey, 'Other', 'Comorbidity', training_data, min_count)
+    # Manually drop t2dm column as also recorded elsewhere in dataset
+    if 'Comorbidity: t2dm' in merged_surrey.columns:
+        merged_surrey = merged_surrey.drop(columns='Comorbidity: t2dm')
+        added_cols -= 1
+        print(f"Comorbidity: t2dm has been dropped due to the pre-existing T2DM column. The other {added_cols} added columns remain.")
+    added_metadata += (added_cols - 1)
+
+if regular_meds:
+    merged_surrey, added_cols = text_to_binary(merged_surrey, 'Regular medications', 'Regular_meds', training_data, min_count)
+    added_metadata +=  (added_cols - 1)
+
+### CLEAN UP ISARIC COLUMNS ############################################################################################
 # Rename Columns in the ISARIC dataset to match Surrey (note: only done for those that pass the filtering stage later in the script)
 isaric_cols = {'age_admission' : 'Age',
                'infiltrates_faorres.day1' : 'Bilateral CXR changes', # Infiltrates are determined from x-rays (I believe) so these are somewhat analogous, if imperfect
@@ -417,10 +487,6 @@ isaric_cols = {'age_admission' : 'Age',
                }
                # Note: Weight is in the PHOSP metadataset, but is NaN for all values. BMI therefore also can't be calculated.
 
-# Save dict to .json so data_preprocessing.py can access it
-with open(f'{validation_data}/isaric_cols.txt', 'w') as file:
-    file.write(json.dumps(isaric_cols))
-
 # Rename ISARIC columns
 merged_isaric.rename(columns=isaric_cols, inplace=True)
 # Drop extraneous columns in ISARIC
@@ -435,12 +501,24 @@ else:
     removed_cols = remove_cols + remove_isaric
 
 # Calculate the number of columns of metadata remaining
-meta_cols_surrey = 71 - len(removed_cols) # 71 columns to start with in this dataset
+# Surrey
+meta_cols_original = len(s_meta_mod.columns) # Get original columns count
+if added_metadata: # If text to binary conversion has been done add the new columns to the count (already has -1 from original column factored in)
+    meta_cols_added = meta_cols_original + added_metadata
+else:
+    meta_cols_added = meta_cols_original
+meta_cols_surrey = meta_cols_added - len(removed_cols) # Subtract removed columns
+meta_cols_names = merged_surrey.columns[0:meta_cols_surrey] # Store for processing later in the script
+
+# ISARIC
 meta_cols_isaric = len(isaric_cols)
+
+### CLEAN UP REMAINING COLUMNS #########################################################################################
+# Check the column values are consistent/correct; i.e. which need to be cleaned (done in the next section)
 
 # Examine remaining columns
 if sample_inves_4:
-    print(f"\nRemoving {len(removed_cols)} columns from the Surrey dataset. {meta_cols_surrey} columns remaining.\n") # Reduced from 71 to 32 columns (currently)
+    print(f"\nRemoving {len(removed_cols)} columns from the Surrey dataset. {meta_cols_surrey} columns remaining.\n")
     print(f"ISARIC metadata columns remaining after removal: {meta_cols_isaric}")
 
     # Note: Some Surrey columns are not processed into a machine readable format or could benefit from further processing. However,
@@ -449,14 +527,11 @@ if sample_inves_4:
     #  For columns like T2DM, is that correlated to covid severity/oxygen need? Otherwise could be biasing data towards majority
     #  Time point information could be deduced from the features, however I need to decide if I'm only using D0 first as that's when the metadata is recorded for
 
-### CLEAN UP REMAINING COLUMNS ########################################################################################
-  # Check the column values are consistent/correct; i.e. which need to be cleaned (done in the next section)
-
 # Settings to check columns
 check_only_one = False # Change this if checking a specific column only, otherwise all are printed
 selected_column = ['CPAP']  # Edit this column name as needed if checking single columns
-check_validation_set = False # Enable to check isaric data
 check_training_set = False # Enable to check Surrey data
+check_validation_set = False # Enable to check isaric data
 
 # Check values
 columns_to_check_surrey = check_columns(merged_surrey, meta_cols_surrey, removed_cols, check_only_one, selected_column, check_training_set)
@@ -581,7 +656,7 @@ merged_isaric.to_csv(f"{validation_data}/ISARIC_data_selected.csv")
 merged_surrey = merged_surrey[merged_surrey['O2 req.'].notna()] # Removes 20 values from Surrey data
 merged_isaric = merged_isaric[merged_isaric['O2 req.'].notna()] # Removes 2 for ISARIC
 
-# Plot missingness across rows (note: no longer removed i order to preserve the most samples)
+# Plot missingness across rows (note: no longer removed in order to preserve the most samples)
 merged_null_before_surrey = plot_row_missingness(merged_surrey, meta_cols_surrey, sample_inves_7, training_graphs, 'Surrey')
 merged_null_before_isaric = plot_row_missingness(merged_isaric, meta_cols_isaric, sample_inves_7, validation_graphs, 'ISARIC')
 
@@ -592,13 +667,19 @@ plot_missingness_msno(merged_isaric, 'ISARIC', meta_cols_isaric, validation_grap
 
 # Note: columns with 100% missingness have already been removed prior to this
 
-# Investigate null values in each column
+# Investigate null values in each column and removing columns with over 30% missingness
 merged_surrey = investigate_null(merged_surrey, 'Surrey', merged_null_before_surrey, sample_inves_7, training_data)
 merged_isaric = investigate_null(merged_isaric, 'ISARIC', merged_null_before_isaric, sample_inves_7, validation_data)
 
 # Determine how many metadata columns remain and plot with missingno
-remaining_meta(s_meta.columns.tolist(), merged_surrey, sample_inves_7, training_graphs)
-remaining_meta(isaric_cols.values(), merged_isaric, sample_inves_7, validation_graphs)
+meta_cols_surrey = remaining_meta(meta_cols_names.tolist(), merged_surrey, sample_inves_7, training_graphs)
+meta_cols_isaric = remaining_meta(isaric_cols.values(), merged_isaric, sample_inves_7, validation_graphs)
+
+# Update config for later access
+with open(config_path, "w") as f:
+    config["general"]["training_meta_cols"] = meta_cols_surrey
+    config["general"]["validation_meta_cols"] = meta_cols_isaric
+    yaml.dump(config, f, sort_keys=False)
 
 ### CONVERT TO NUMERICAL ###############################################################################################
 # Initialise list of numerical vs categorical
@@ -618,35 +699,35 @@ numerical_check_nan(merged_isaric, numerical_isaric, categorical_isaric, sample_
 #  otherwise the two aren't comparable even if the same columns technically exist in each).
 
 # Drop the columns from Surrey that have been filtered for missingness in ISARIC, and vice versa
-shared_cols = merged_surrey.columns.intersection(merged_isaric.columns)
-if sample_inves_9:
-    print(f"Number of columns shared between datasets: {len(shared_cols)}")
-# Subset datasets to shared columns only
-old_surrey = merged_surrey.copy()
-old_isaric = merged_isaric.copy()
-merged_surrey = merged_surrey[shared_cols]
-merged_isaric = merged_isaric[shared_cols]
+if validate:
+    shared_cols = merged_surrey.columns.intersection(merged_isaric.columns)
+    if sample_inves_9:
+        print(f"Number of columns shared between datasets: {len(shared_cols)}")
+    # Subset datasets to shared columns only
+    old_surrey = merged_surrey.copy()
+    old_isaric = merged_isaric.copy()
+    merged_surrey = merged_surrey[shared_cols]
+    merged_isaric = merged_isaric[shared_cols]
 
-# Determine dropped columns
-dropped_surrey = set(old_surrey.columns) - set(shared_cols)
-dropped_isaric = set(old_isaric.columns) - set(shared_cols)
+    # Determine dropped columns
+    dropped_surrey = set(old_surrey.columns) - set(shared_cols)
+    dropped_isaric = set(old_isaric.columns) - set(shared_cols)
 
-# Print dropped columns
-if sample_inves_9:
-    print(f"{len(dropped_surrey)} columns dropped from Surrey:")
-    print(dropped_surrey)
+    # Print dropped columns
+    if sample_inves_9:
+        print(f"{len(dropped_surrey)} columns dropped from Surrey:")
+        print(dropped_surrey)
 
-    print(f"{len(dropped_isaric)} columns dropped from ISARIC:")
-    print(dropped_isaric)
+        print(f"{len(dropped_isaric)} columns dropped from ISARIC:")
+        print(dropped_isaric)
 
 ### LOG2 TRANSFORM THE PROTEOMICS DATA #################################################################################
 merged_surrey.iloc[:,meta_cols_surrey:] = np.log2(merged_surrey.iloc[:,meta_cols_surrey:] + 1e-6) # IMPROVE This log transformation is not noted in the data headers anywhere but is used in all future processing
 merged_isaric.iloc[:,meta_cols_isaric:] = np.log2(merged_isaric.iloc[:,meta_cols_isaric:] + 1e-6)
 
 # Save final datasets to csv
-if not validate:
-    merged_surrey.to_csv(f"{training_data}/Surrey_final.csv")
-else:
+merged_surrey.to_csv(f"{training_data}/Surrey_final.csv")
+if validate:
     merged_isaric.to_csv(f"{validation_data}/ISARIC_final.csv")
 
 ### PLOT CLASS DISTRIBUTION ############################################################################################
@@ -656,7 +737,6 @@ plot_class_distribution(merged_isaric, validation_graphs, 'ISARIC')
 ### FILTER TO DAY 0 TIMEPOINTS ONLY FOR SURREY #########################################################################
   # As the metadata was recorded for only Day 0, the future timepoints have incorrect metadata. If using metadata only,
   # this can be disabled to allow all timepoints.
-day_zero = True
 SID_dict = {}
 filtered_SIDs = []
 if day_zero:

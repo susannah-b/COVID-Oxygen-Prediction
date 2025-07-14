@@ -5,11 +5,11 @@ from sklearn.inspection import permutation_importance
 from sklearn.pipeline import Pipeline
 from sklearn.tree import plot_tree, export_text
 from sklearn.calibration import calibration_curve, CalibrationDisplay
-from sklearn.metrics import accuracy_score, f1_score, brier_score_loss, confusion_matrix
+from sklearn.metrics import accuracy_score, f1_score, brier_score_loss
 from sklearn.model_selection import cross_val_score, StratifiedKFold, learning_curve, LearningCurveDisplay
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.metrics import roc_curve, auc, RocCurveDisplay, precision_recall_curve, average_precision_score, PrecisionRecallDisplay
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import StandardScaler, LabelEncoder, MultiLabelBinarizer
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA
 from xgboost import to_graphviz
@@ -171,9 +171,15 @@ def investigate_null(merged, dataset, merged_null_before, sample_inves_7, output
                                header=["NA Count Before", "Missingness (%) Before", "NA Count After",
                                        "Missingness (%) After"],
                                float_format="%.1f")
+    # Report how many columns were removed
+    num_cols_before = merged_null_before.shape[0]
+    num_cols_after = len(merged.columns)
+    num_removed = num_cols_before - num_cols_after
+
+    print(f"{num_removed} columns in the {dataset} dataset were removed due to ≥30% missingness.")
     return merged
 
-# Determine remaining metadata columns and plot with missingno # IMPROVE - think same logic is used elsewhere - could apply function
+# Determine remaining metadata columns and plot with missingno
 def remaining_meta(meta_columns, merged, sample_inves_7, graphs_dir):
     # Determine remaining columns
     existing_columns = merged.columns.tolist()
@@ -204,6 +210,7 @@ def remaining_meta(meta_columns, merged, sample_inves_7, graphs_dir):
     fig = msno.matrix(merged.iloc[:, meta_cols:])  # Note: This is currently 546-27=519 MS data columns
     fig_copy = fig.get_figure()
     fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_after_filtering.png', bbox_inches='tight')
+    return meta_cols
 
 # Categorise as numerical or categorical
 def categorise_cols(merged, sample_inves_8):
@@ -269,6 +276,57 @@ def plot_class_distribution(merged, graphs_dir, dataset):
     plt.ylabel('Count')
     plt.savefig(f'{graphs_dir}/class_distribution_{dataset}.png', dpi=200)
 
+# Convert text-based comma-split columns to binary
+def text_to_binary(dataset, col_name, col_type, training_data, min_count):
+    # Process text into uniform lists
+    dataset[col_name] = (
+        dataset[col_name].fillna('').str.lower().str.split(',').apply(lambda items: [item.strip() for item in items if item.strip()]))
+
+    # Function to remove the last item in the cell if there are multiple items (i.e. remove '' except if the cell is truly NaN)
+    def remove_trailing_comma(contents):
+        if isinstance(contents, list) and len(contents) > 2 and contents[-1] == '':
+            return contents[:-1]
+        return contents
+
+    dataset[col_name] = dataset[col_name].apply(remove_trailing_comma)
+
+    # Create binary columns
+    mlb = MultiLabelBinarizer()
+    matrix = mlb.fit_transform(dataset[col_name])
+    binary_df = pd.DataFrame(matrix, columns=[f"{col_type}: {m}" for m in mlb.classes_],
+                             index=dataset.index)
+
+    # Count medication frequencies (also used to check for errors) and save to csv
+    counts = pd.DataFrame({col_type: mlb.classes_, 'Count': matrix.sum(axis=0)})
+    counts = counts.sort_values('Count', ascending=False)
+    counts.to_csv(f'{training_data}/Frequencies_{col_type}.csv', index=False)
+
+    # Drop rare binary columns
+    frequent_cols = counts[counts['Count'] >= min_count][col_type].tolist()
+    cols_added = len(frequent_cols)
+    binary_df = binary_df[[f"{col_type}: {m}" for m in frequent_cols]]
+
+    # Drop old column and add new ones
+    col_position = dataset.columns.get_loc(col_name)
+    dataset = (dataset.drop(col_name, axis=1))
+
+    # Add columns at position of old column by splitting and rejoing the dataset
+    dataset = pd.concat([dataset.iloc[:, :col_position], binary_df, dataset.iloc[:, col_position:]],
+                              axis=1)
+
+    print(f"The '{col_name}' column has been expanded into {len(frequent_cols)} binary columns.")
+    return dataset, cols_added
+
+# Replace values found within a column to fix typos
+def replace_values(df, column_name, original, replacement):
+    # Escape special regex characters in the original string
+    escaped_original = re.escape(original)
+    # Create regex pattern with word boundaries
+    pattern = r'\b' + escaped_original + r'\b'
+    # Perform replacement with case insensitivity
+    df[column_name] = df[column_name].str.replace(pattern, replacement, case=False, regex=True)
+    return df
+
 ### DATA_PREPROCESSING.PY FUNCTIONS ####################################################################################
 # Convert categories to pandas categorical - ordinal and nominal
 def convert_categories(dataset, ordinal_cats):
@@ -313,7 +371,7 @@ def plot_missingness_ms(dataset, graphs_dir, name):
     # Result: Greater missingness at lower intensities suggests MNAR prevalence due to left censoring (below detection limit)
 
 # Impute with miceforest package (MICE imputation)
-def impute_MICE(dataset, filename):
+def impute_MICE(dataset, filename, datastring, num_datasets, iterations, graphs_dir):
     # Create a dataset to store intermediate columns for missingness handling
     dataset_missing = dataset.copy()
 
@@ -325,33 +383,30 @@ def impute_MICE(dataset, filename):
 
     ### MAR Imputation for complete dataset with MICE
     # Initialize kernel (handles categoricals natively)
-    kernel = mf.ImputationKernel(data=dataset_missing, num_datasets=3, random_state=42) # todo could increase with more memory (and for test)
+    kernel = mf.ImputationKernel(data=dataset_missing, num_datasets=num_datasets, random_state=42)
 
     # Run MICE with 10 iterations
-    kernel.mice(iterations=5, min_data_in_leaf=3) # TODO iterations was set to 10 but memory runs out, restore if running on HPC # Default MDIL is I think 20; experiment with this.
-    # kernel.plot_feature_importance(dataset=0) #todo commenting plots to try and reduce memory
-    # kernel.plot_imputed_distributions()
-    #
-    # # Save feature importance plot #todo haven't looked at these for the test or train data yet as i haven't been able to test generation, maybe remove. same for distributions
-    # TODO there is also a get feature importance function that returns a matrix
+    kernel.mice(iterations=iterations, min_data_in_leaf=3)
+
+    # Save feature importance plot
     # todo also tune hyperparameters? would that give better prediction
     # todo check miceforest usage examples - see github
-    # fig1 = kernel.plot_feature_importance(dataset=0)
-    # plt.tight_layout()
-    # plt.savefig(f'{graphs_dir}/Surrey_feature_importance_plot.png')
-    # plt.close(fig1)
-    #
-    # # Save imputed distributions plot
-    # fig2 = kernel.plot_imputed_distributions()
-    # plt.tight_layout()
-    # plt.savefig(f'{graphs_dir}/Surrey_imputed_distributions_plot.png')
-    # plt.close(fig2)
+    fig1 = kernel.plot_feature_importance(dataset=0) # WARNING - plots are untested - if unnecessary then remove
+    plt.tight_layout()
+    plt.savefig(f'{graphs_dir}/{datastring}_feature_importance_plot.png')
+    plt.close(fig1)
 
-    # # Save mean convergence plot #todo added from documentation so need to check
-    # fig3 = kernel.plot_mean_convergence(dataset=0)
-    # plt.tight_layout()
-    # plt.savefig(f'{graphs_dir}/Surrey_mean_convergence_plot.png')
-    # plt.close(fig3)
+    # Save imputed distributions plot
+    fig2 = kernel.plot_imputed_distributions()
+    plt.tight_layout()
+    plt.savefig(f'{graphs_dir}/{datastring}_imputed_distributions_plot.png')
+    plt.close(fig2)
+
+    # Save mean convergence plot #todo added from documentation so need to check
+    fig3 = kernel.plot_mean_convergence() # todo check it converges
+    plt.tight_layout()
+    plt.savefig(f'{graphs_dir}/{datastring}_mean_convergence_plot.png')
+    plt.close(fig3)
 
     # Return dataset with missing values imputed
     dataset_missing = kernel.complete_data()
@@ -387,27 +442,28 @@ def encode_y(y):
     return y
 
 ### MODEL_BUILDING.PY FUNCTIONS ########################################################################################
-# Detect metadata columns in the dataset
-def count_meta(dataset, name, metadata_features, drop, show_detail):
-    matched = False # Initialise
-    existing_columns = dataset.columns.tolist()
-    col_number = 0 # Initialise
-    for col in reversed(metadata_features):
-        if col in existing_columns:
-            matched = True
-            if show_detail:
-                print(f"\nMetadata columns in {name}:")
-                print(dataset.columns.get_loc(col) + 1) # +1 for 1-based indexing conversion / allows for splicing where the first number is inclusive and the second exclusive
-            col_number = dataset.columns.get_loc(col) + 1
-            break
-    if not matched:
-        if show_detail:
-            print("No metadata columns found.")
-    if drop: # Drop the metadata if bool is true
-        dataset = dataset.iloc[:, col_number:]
-        col_number = 0 # Now removed all metadata so count is 0
-        print(f"Metadata was dropped from {name}; if unintended, disable drop_metadata in the script.")
-    return col_number,dataset
+# # Detect metadata columns in the dataset - No longer in use # TODO remove at end if remains unused
+# def count_meta(dataset, name, metadata_features, drop, show_detail):
+#     matched = False # Initialise
+#     existing_columns = dataset.columns.tolist()
+#     col_number = 0 # Initialise
+#     for col in reversed(metadata_features):
+#         if col in existing_columns:
+#             matched = True
+#             if show_detail:
+#                 print(f"\nMetadata columns in {name}:")
+#                 print(dataset.columns.get_loc(col) + 1) # +1 for 1-based indexing conversion / allows for splicing where the first number is inclusive and the second exclusive
+#             col_number = dataset.columns.get_loc(col) + 1
+#             print(col_number)
+#             break
+#     if not matched:
+#         if show_detail:
+#             print("No metadata columns found.")
+#     if drop: # Drop the metadata if bool is true
+#         dataset = dataset.iloc[:, col_number:]
+#         col_number = 0 # Now removed all metadata so count is 0
+#         print(f"Metadata was dropped from {name}; if unintended, disable drop_metadata in the script.")
+#     return col_number,dataset
 
 # Basic model training function to get some initial scores and decide which model to proceed with
 def basic_train(model, X_train, y_train, identifier, scores_dict, feature_selectors, feature_selection, threshold):

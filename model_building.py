@@ -34,7 +34,7 @@ from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 import warnings
-from functions import count_meta, basic_train, IntToFloatTransformer, port_in_use, pca_original, plot_learning_curve, \
+from functions import basic_train, IntToFloatTransformer, port_in_use, pca_original, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
     plot_pca_predicted, plot_confusion_matrix, plot_fs_performance
 import re
@@ -83,13 +83,17 @@ with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 
 # Set parameters for this file:
-validate = config['general']['validate']
-var_threshold = config['model_building']['var_threshold']
-feature_selection = config['model_building']['feature_selection']
-basic_training = config['model_building']['basic_training']
-n_models_to_tune = config['model_building']['n_models_to_tune']
-host = config['general']['host']
-port = config['general']['port']
+validate = config['general']['validate'] # Whether to make the Surrey dataset validation compatible
+var_threshold = config['model_building']['var_threshold'] # Threshold for variance filtering
+feature_selection = config['model_building']['feature_selection'] # Whether to do feature selection at all stages
+basic_training = config['model_building']['basic_training'] # Whether to run basic_training (vs load in specific model type/feature selector)
+n_models_to_tune = config['model_building']['n_models_to_tune'] # How many model types to take to the hyperparamter tuning stage
+host = config['general']['host'] # Host for tracking server
+port = config['general']['port'] # Port for local tracking server
+model_choice = config['model_building']['specify_model']['model_type'] # Model type if not basic training # TODO update with best once determined
+fs_choice = config['model_building']['specify_model']['fs'] #Feature selector if not basic training # TODO update with best once determined
+max_evals = config['model_building']['max_evals'] # How many evaluations to do in hyperopt tuning
+track_final = config['model_building']['track_final'] # Whether to copy the model_output to the designated folder for easier browsing
 
 # Determine which models to test (set in config file)
 Logistic_regression = config['model_building']['models_to_test']['Logistic_regression']
@@ -134,17 +138,6 @@ pd.set_option('display.max_columns', None)
 # TODO: Note that some isaric columns were selected that might be innaccurate (eg day 1 x ray infiltrates as analogous to Bilateral CXR changes
 #  in Surrey data. It would be worth experimenting with dropping some of these here to see if the model improves (although if not feature-selected
 #  then it most likely has very minimal impact. Do here to avoid regenerating data, although technically it could affect imputation/scaling/maybe FS.
-
-### COUNT METADATA #####################################################################################################
-# TODO: think this can be removed as I no longer drop metadata here but in preprocessing.
-# # Read in the original metadata file to read the column info
-# s_meta_file = Path(__file__).parent / "Surrey_Files" / "Surrey_Metadata_master_spreadsheet_130622_edit2.csv"
-# s_meta = pd.read_csv(s_meta_file)
-# # List starting and filtered columns
-# meta_columns = s_meta.columns.tolist()
-#
-# # Call function to count metadata columns (X_train only due to identical columns)
-# meta_cols, X_train = count_meta(X_train, "X_train", meta_columns, False, show_detail) # Note that drop is always false in this usage - even if changed for previous data
 
 ### PCA ON ORIGINAL DATA ###############################################################################################
 try:
@@ -355,7 +348,6 @@ feature_selectors = {
 top_model_scores = {}
 
 #  WARNING override version vs using config for testing - delete  after testing:
-n_models_to_tune = 2
 Logistic_regression = True
 SVM = True
 Random_forest = True
@@ -447,14 +439,10 @@ if basic_training:
     print("\nThe models taken to the hyperparameter tuning stage are:\n", hypertune)
 else:
     # Set model and feature selector that perform the best - do this manually by adding entries below based on the results of prior basic_training runs
-    best_models_fs["RandomForestClassifier"] = "SFM_RF"  # Note: example values included; not actual results
-    # ... continue as needed
+    best_models_fs[model_choice] = fs_choice
+    # IMPROVE could add option to specify more by doing the config param as a dict instead
     hypertune = pd.DataFrame(best_models_fs.items(), columns=['Model', 'Selector'])
     print("\nThe models taken to the hyperparameter tuning stage are:\n", hypertune)
-
-
-# Example printed result from basic training:
-# TODO paste in example output once feature selection is more pinned down/state which perform the best
 
 ### OBJECTIVE FUNCTION FOR HYPEROPT PARAMETER TUNING ###################################################################
 # For selected models, define a parameter params['type'] for the model name. Then evaluate parameters and calculate the cross-validated accuracy.
@@ -778,7 +766,7 @@ with mlflow.start_run(run_name=hyperopt_name) as run:
         fn=objective,
         space=search_space,
         algo=tpe.suggest,
-        max_evals=2, #todo: increase on a better machine # IMPROVE this and other settings/bools could be set using a config file
+        max_evals=max_evals,
         trials=Trials()
     )
     # Print run id
@@ -963,7 +951,7 @@ with mlflow.start_run(run_name=run_name) as run:
     plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, data_dir, best_params,
                             X_test, y_test)
 
-    # Plot calibration curve - TODO untested
+    # Plot calibration curve
     plot_calibration_curve(final_pipeline, X_test, y_test, classifier_type, graphs_dir)
 
     # Plot decision tree
@@ -992,8 +980,7 @@ with mlflow.start_run(run_name=run_name) as run:
 # (which is also available in the server) but renamed here for easier access based on the suffix defined in the config
 # file.
 # Bool to set whether to copy the runs to the final output subdirectory - for testing only this can be disabled
-track_final = True #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful
-if track_final:
+if track_final: #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful
     print("\'track_final\' has been enabled, so the model information will be copied to ./model_output for easier viewing.")
 
     # Determine file locations

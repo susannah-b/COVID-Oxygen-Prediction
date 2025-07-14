@@ -4,23 +4,14 @@
 
 ######### SETUP ########################################################################################################
 # Import libraries
-import seaborn as sns
-import matplotlib.pyplot as plt
 import pandas as pd
 from pathlib import Path
-import os
-import json
 import argparse
 import yaml
-from functions import count_meta, convert_categories, normalise_MS, impute_MICE, encode_categorical, encode_y, \
+from functions import convert_categories, normalise_MS, impute_MICE, encode_categorical, encode_y, \
     plot_missingness_ms
 
-# TODO delete any unused at end
-
-# WARNING NOTE IMPORTANT for test and train imputation, num_datsets and iterations are very low in an attempt to get it to run. must be changed and run on hpc
-
 # WARNING untested for validate False after some changes to the file structure
-
 # WARNING This script is largely untested after changes to structure due to computational limitations. Check it runs fine on HPC - is the output data what you expect?
 
 # Set pandas to display all columns
@@ -54,9 +45,11 @@ with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 
 # Set parameters for this file:
-validate = config['general']['validate']
-impute = config['data_preprocessing']['impute']
-drop = config['data_preprocessing']['drop_metadata']
+validate = config['general']['validate'] # Whether to make the Surrey dataset compatible with the valdiation dataset
+impute = config['data_preprocessing']['impute'] # Whether to impute (vs load a pre-imputed file)
+drop_metadata = config['data_preprocessing']['drop_metadata'] # Whether to drop the metadata from the model
+num_datasets = config['data_preprocessing']['num_datasets_imputation'] # num_datasets for miceforest imputation
+iterations = config['data_preprocessing']['num_datasets_imputation'] # iterations for miceforest imputation
 
 ### PREPARE THE DATA ###################################################################################################
 
@@ -110,27 +103,19 @@ if show_testing:
     print(isaric_X.iloc[:5, :5])  # Should be a df with SID as indexes, column values look as expected
 
 ### DETERMINE REMAINING METADATA COLUMNS ###############################################################################
-# Read in the isaric_cols file so the ISARIC columns are known
-with open(f'{validation_data}/isaric_cols.txt', 'r') as file:
-    isaric_cols = json.load(file)
+meta_cols_surrey = config['general']['training_meta_cols'] - 1 # -1 Due to removed of Label (O2 req.) column for X vs y
+meta_cols_isaric = config['general']['validation_meta_cols'] - 1
 
-# Read in the original metadata file to filter down to the metadata only
-# Surrey
-meta_file_surrey = Path(__file__).parent / "Surrey_Files" / "Surrey_Metadata_master_spreadsheet_130622_edit2.csv"
-meta_surrey = pd.read_csv(meta_file_surrey)
-# ISARIC
-meta_file_isaric = Path(__file__).parent / validation_data / "ISARIC_final.csv" # For ISARIC the combined quant file has to be used as the metadata in the original file is renamed
-meta_isaric = pd.read_csv(meta_file_isaric)
-renamed_meta_cols = list(isaric_cols.values())
-kept_meta_cols = [col for col in renamed_meta_cols if col in meta_isaric.columns] # Filter to only columns that haven't been removed
-meta_isaric = meta_isaric[kept_meta_cols]
-
-# Determine meta column number
-meta_columns_list_s = meta_surrey.columns.tolist()
-meta_columns_list_i = meta_isaric.columns.tolist()
-meta_cols_surrey, X_train_surrey = count_meta(surrey_X_train, 'Surrey', meta_columns_list_s, drop, show_testing)
-meta_cols_isaric, isaric_X = count_meta(isaric_X, 'ISARIC', meta_columns_list_i, drop, show_testing)
-# WARNING: dropping of metadata was moved from m_b.py to here. Shouldn't interfere but if problems arise, check this
+# Drop the metadata if enabled # IMPROVE - should this be moved to feature_engineering.py - doesn't affect results but is a bit misleading that the produced data includes metadata there for earlier files
+if drop_metadata:  # Drop the metadata if bool is true
+    # Surrey
+    surrey_X_train = surrey_X_train.iloc[:, meta_cols_surrey:]
+    meta_cols_surrey = 0
+    print(f"Metadata was dropped from the Surrey dataset; if unintended, disable drop_metadata in the script.")
+    # ISARIC
+    isaric_X = isaric_X.iloc[:, meta_cols_isaric:]
+    meta_cols_isaric = 0
+    print(f"Metadata was dropped from the ISARIC dataset; if unintended, disable drop_metadata in the script.")
 
 ### HANDLE CATEGORICAL DATA FOR IMPUTATION #############################################################################
 # Detect numeric vs categorical columns
@@ -210,9 +195,9 @@ imputed_surrey_test = f"{training_data}/Surrey_test_after_imputation.csv"
 imputed_isaric = f"{validation_data}/ISARIC_after_imputation.csv"
 
 if impute:
-    surrey_X_train = impute_MICE(surrey_X_train, imputed_surrey_train)
-    X_test = impute_MICE(X_test, imputed_surrey_test)
-    isaric_X = impute_MICE(isaric_X, imputed_isaric)
+    surrey_X_train = impute_MICE(surrey_X_train, imputed_surrey_train, 'Surrey_Train', num_datasets, iterations, training_graphs)
+    X_test = impute_MICE(X_test, imputed_surrey_test, 'Surrey_Test', num_datasets, iterations, training_graphs)
+    isaric_X = impute_MICE(isaric_X, imputed_isaric, 'ISARIC',num_datasets , iterations, validation_graphs)
 
 else: # If not imputing, read in the data
     print("Skipping imputation; using already produced imputed file. Otherwise set impute = True")
