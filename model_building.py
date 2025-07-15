@@ -227,62 +227,61 @@ class IntToFloatTransformer(BaseEstimator, TransformerMixin):
         return X
 
 ### DEFINE FEATURE SELECTION PER MODEL #################################################################################
-# TODO add a config setting to limit to specify which ones to include (add comment to suggest shorter ones)
 ### Feature selection methods taken from scikit-learn documentation # IMPROVE - methods were chosen to cover a wide range of approaches/models but could be tweaked further
 # Dictionary of feature selector options. base_params are fixed parameters that also apply to basic_train, with other parameters tunable later in the search space
-feature_selectors = {
-    # # RFECV with Logistic Regression
-    # 'RFECV_LR': {
-    #     'class': RFECV,
-    #     'base_params': {
-    #         'estimator': LogisticRegression(),
-    #         'step': 1,
-    #         'cv': StratifiedKFold(5),
-    #         'scoring': "f1",
-    #         'min_features_to_select': 50,
-    #     }
-    # },
-    # # RFECV with Support Vector Classifier
-    # 'RFECV_SVC': {
-    #     'class': RFECV,
-    #     'base_params': {
-    #         'estimator': SVC(kernel='linear'),
-    #         'step': 1,
-    #         'cv': StratifiedKFold(5),
-    #         'scoring': "f1",
-    #         'min_features_to_select': 50,
-    #     }
-    # },
-    # # RFECV with Random Forest #TODO untested - takes very long so either run on HPC or with more time
-    # 'RFECV_RF': {
-    #     'class': RFECV,
-    #     'base_params': {
-    #         'estimator': RandomForestClassifier(random_state=42),
-    #         'step': 1,
-    #         'cv': StratifiedKFold(5),
-    #         'scoring': "f1",
-    #         'min_features_to_select': 50,
-    #     }
-    # },
-    # # RFECV with XGBoost #TODO untested - takes very long so either run on HPC or with more time
-    # 'RFECV_XGB': {
-    #     'class': RFECV,
-    #     'base_params': {
-    #         'estimator': XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, colsample_bytree=0.8,
-    #                                    eval_metric='logloss', random_state=42),
-    #         'step': 1,
-    #         'cv': StratifiedKFold(5),
-    #         'scoring': "f1",
-    #         'min_features_to_select': 50,
-    #     }
-    # },
+feature_selectors_all = {
+    # RFECV with Logistic Regression
+    'RFECV_LR': {
+        'class': RFECV,
+        'base_params': {
+            'estimator': LogisticRegression(),
+            'step': 1,
+            'cv': StratifiedKFold(5),
+            'scoring': "f1",
+            'min_features_to_select': 50,
+        }
+    },
+    # RFECV with Support Vector Classifier
+    'RFECV_SVC': {
+        'class': RFECV,
+        'base_params': {
+            'estimator': SVC(kernel='linear'),
+            'step': 1,
+            'cv': StratifiedKFold(5),
+            'scoring': "f1",
+            'min_features_to_select': 50,
+        }
+    },
+    # RFECV with Random Forest #TODO untested - takes very long so either run on HPC or with more time
+    'RFECV_RF': {
+        'class': RFECV,
+        'base_params': {
+            'estimator': RandomForestClassifier(random_state=42),
+            'step': 1,
+            'cv': StratifiedKFold(5),
+            'scoring': "f1",
+            'min_features_to_select': 50,
+        }
+    },
+    # RFECV with XGBoost #TODO untested - takes very long so either run on HPC or with more time
+    'RFECV_XGB': {
+        'class': RFECV,
+        'base_params': {
+            'estimator': XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, colsample_bytree=0.8,
+                                       eval_metric='logloss', random_state=42),
+            'step': 1,
+            'cv': StratifiedKFold(5),
+            'scoring': "f1",
+            'min_features_to_select': 50,
+        }
+    },
     # SelectFromModel with Logistic Regression
-    # 'SFM_LR': {
-    #     'class': SelectFromModel,
-    #     'base_params': {
-    #         'estimator': LogisticRegression()
-    #     }
-    # },
+    'SFM_LR': {
+        'class': SelectFromModel,
+        'base_params': {
+            'estimator': LogisticRegression()
+        }
+    },
     # SelectFromModel with Support Vector Classifier
     'SFM_SVC': {
         'class': SelectFromModel,
@@ -298,14 +297,14 @@ feature_selectors = {
             'threshold': "median"
         }
     },
-    # # SelectFromModel with XGBoost
-    # 'SFM_XGB': {
-    #     'class': SelectFromModel,
-    #     'base_params': {
-    #         'estimator': XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, colsample_bytree=0.8,
-    #                                    eval_metric='logloss', random_state=42)
-    #     }
-    # },
+    # SelectFromModel with XGBoost
+    'SFM_XGB': {
+        'class': SelectFromModel,
+        'base_params': {
+            'estimator': XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, colsample_bytree=0.8,
+                                       eval_metric='logloss', random_state=42)
+        }
+    },
     # SelectFromModel with Lasso
     'SFM_LAS': {
         'class': SelectFromModel,
@@ -313,40 +312,49 @@ feature_selectors = {
             'estimator': Lasso(alpha=0.05, max_iter=10000, random_state=42)
         }
     },
-    # # Sequential Feature Selection with Logistic Regression
-    # 'SFS_LR': {
-    #     'class': SequentialFeatureSelector,
-    #     'base_params': {
-    #         'estimator': LogisticRegression(),
-    #         'n_features_to_select': 'auto',
-    #         'tol': 0.01,
-    #     }
-    # },
-    # # Sequential Feature Selection with Linear SVC
-    # 'SFS_LSVC': {
-    #     'class': SequentialFeatureSelector,
-    #     'base_params': {
-    #         'estimator': LinearSVC(),
-    #         'n_features_to_select': 'auto',
-    #         'tol': 0.01,
-    #     }
-    # },
-    # # Sequential Feature Selection with XGBoost #TODO untested - takes very long so either run on HPC or with more time
-    # 'SFS_XGB': {
-    #     'class': SequentialFeatureSelector,
-    #     'base_params': {
-    #         'estimator': XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, colsample_bytree=0.8,
-    #                                    eval_metric='logloss', random_state=42),
-    #         'n_features_to_select': 'auto',
-    #         'tol': 0.01,
-    #     }
-    # },
-    # # No feature selection #TODO untested
-    # 'NONE': {
-    #     'class': None,
-    #     'base_params': {}
-    #     }
+    # Sequential Feature Selection with Logistic Regression
+    'SFS_LR': {
+        'class': SequentialFeatureSelector,
+        'base_params': {
+            'estimator': LogisticRegression(),
+            'n_features_to_select': 'auto',
+            'tol': 0.01,
+        }
+    },
+    # Sequential Feature Selection with Linear SVC
+    'SFS_LSVC': {
+        'class': SequentialFeatureSelector,
+        'base_params': {
+            'estimator': LinearSVC(),
+            'n_features_to_select': 'auto',
+            'tol': 0.01,
+        }
+    },
+    # Sequential Feature Selection with XGBoost #TODO untested - takes very long so either run on HPC or with more time
+    'SFS_XGB': {
+        'class': SequentialFeatureSelector,
+        'base_params': {
+            'estimator': XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, subsample=0.8, colsample_bytree=0.8,
+                                       eval_metric='logloss', random_state=42),
+            'n_features_to_select': 'auto',
+            'tol': 0.01,
+        }
+    },
+    # No feature selection #TODO untested
+    'NONE': {
+        'class': None,
+        'base_params': {}
+        }
     }
+
+candidate_fs = ['RFECV_LR', 'RFECV_SVC', 'RFECV_RF', 'RFECV_XGB', 'SFM_LR', 'SFM_SVC', 'SFM_RF', 'SFM_XGB', 'SFM_LAS',
+                'SFS_LR', 'SFS_LSVC', 'SFS_XGB', 'NONE']
+
+# If enabled in config, add to the feature_selectors dictionary for use in basic_train
+feature_selectors = {}
+for fs_name in candidate_fs:
+    if config['model_building']['feature_selectors'].get(fs_name):  # Check if enabled
+        feature_selectors[fs_name] = feature_selectors_all[fs_name]
 
 ### ESTIMATE BEST MODELS WITH BASIC SETTINGS ###########################################################################
 # Initialise dict to store best results per model

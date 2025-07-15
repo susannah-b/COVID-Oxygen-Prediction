@@ -1,5 +1,5 @@
 # Config file for the oxygen model. Do not alter this file - make a copy called config.yaml or run data_preprocessing.py/pipeline.py to initialise
-# a copy with the default settings.
+# a copy with the default settings. Explanations are found in the comments underneath each setting.
 
 # Note: some settings primarily used for testing remain in the Python scripts which can be changed as needed.
 
@@ -48,12 +48,27 @@ model_building:
   feature_selection: True
     # Whether to do feature selection or not - applies to all steps (basic training, hyperparameter exploration, and final model training
   basic_training: True
-    # BWhether to go through the training of basic models to determine the most promising candidates/feature selectors (alternative is to set certain methods below)
+    # Whether to go through the training of basic models to determine the most promising candidates/feature selectors (alternative is to set certain methods below)
   specify_model:
     # If basic_training is disabled, use the model type/feature selector specified here
     # See the output tables of model_building.py for the appropriate format
     model_type: "RandomForestClassifier"
     fs: "SFM_RF"
+  feature_selectors:
+    RFECV_LR: False # Some of these are temporaily disabled for testing
+    RFECV_SVC: False
+    RFECV_RF: False
+    RFECV_XGB: False
+    SFM_LR: True
+    SFM_SVC: True
+    SFM_RF: True
+    SFM_XGB: True
+    SFM_LAS: True
+    SFS_LR: False
+    SFS_LSVC: False
+    SFS_XGB: False
+    NONE: False
+    # Whether to include each feature selector as a possible candidate for basic_training
   models_to_test:
     # Models to test as part of basic_train; determines which will be carried to the tuning stage
     Logistic_regression: True
@@ -65,7 +80,7 @@ model_building:
     KNN: True
   n_models_to_tune: 2
     # The top N models - change this as needed
-  max_evals: 100 # Set to 100 for testing but will likely need to be increased for real training runs
+  max_evals: 3 # Set to 3 for testing but will need to be increased for real training runs
     # Change this as needed
   track_final: true 
     # Whether to copy the model_output to the designated folder for easier browsing
@@ -76,6 +91,7 @@ neural_network:
   # Configurations pertaining to the neural network script
   input_data: 
     # Set folder as required; should be a 'training_data' folder from the traditional model output/preliminary scripts (X_train, y_train, X_test, y_test .csv files)
-
+  var_threshold: 1e-10
+    # Change this to change the threshold for variance filtering
 
 
