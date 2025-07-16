@@ -14,6 +14,8 @@ from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 import shutil
 import argparse
 import yaml
+import os
+
 from functions import port_in_use, pca_original, plot_roc_auc, plot_feature_importance, plot_calibration_curve, \
     plot_decision_tree, plot_precision_recall, plot_pca_predicted, plot_confusion_matrix
 
@@ -58,11 +60,16 @@ if not args.from_pipeline: # If calling as a standalone script, save to the curr
 else: # Put into input storage folder to prevent overwriting
     data_dir = f'inputs/ML/{run_name}/validation_data'
 
+# Create output directories for the data
+output_data_dir = f'{data_dir}/ML'
+os.makedirs(output_data_dir, exist_ok=True)
+
 # Create output directory for the graphs
 if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
-    graphs_dir = 'validation_graphs' # Combine with other validation graphs if using training data
+    graphs_dir = 'validation_graphs/ML' # Combine with other validation graphs if using training data
 else: # Put into input storage folder to prevent overwriting
-    graphs_dir = f'inputs/ML/{run_name}/validation_graphs'
+    graphs_dir = f'inputs/ML/{run_name}/validation_graphs/ML'
+os.makedirs(graphs_dir, exist_ok=True) # Make the ML graph that's specific to the ML outputs
 
 dataset = "ISARIC"
 X_path = Path(__file__).parent / data_dir / f"{dataset}_X.csv"
@@ -89,21 +96,21 @@ mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "4_0714-174323_testing_pipeline" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "9_0716-170330_Testing_50_evals" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
-# Load model by run ID
-model_output = f"model_output/ML/{model_name}"
+# Load model by run ID # TODO - think this should be changed to the mlruns file as model_output isn't always made
+model_output = f"model_output/{model_name}"
 model_path = f"{model_output}/artifacts/best_model"
 model = mlflow.sklearn.load_model(model_path)
 
 # Load input features
-features_path = f"{model_output}/training_data/input_features.joblib"
+features_path = f"{model_output}/training_data/ML/input_features.joblib"
 input_features = joblib.load(features_path)
 
 # Load selected features
-features_path_2 = f"{model_output}/training_data/selected_features.joblib"
+features_path_2 = f"{model_output}/training_data/ML/selected_features.joblib"
 selected_features = joblib.load(features_path_2)
 
 # Set MLflow logging details
@@ -152,7 +159,11 @@ with mlflow.start_run(run_name=val_run_name) as run:
     print(f"\nValidation accuracy: {test_accuracy:.4f}")
     print(f"Validation F1 score: {test_f1:.4f}")
 
-### GRAPHS #############################################################################################################
+    # Save predictions to csv
+    model_results = pd.DataFrame({'Real values': y_data.values, 'ML predictions': predictions}, index=X_data.index)
+    model_results.to_csv(f"{output_data_dir}/Prediction_results_validation_data.csv")
+
+    ### GRAPHS #############################################################################################################
     # Plot PCA on the combined dataset - i.e. original data after feature selection #todo for all pcas, check a few samples to confirm they're correct (label on graph)
     with mlflow.start_run(nested=True): # Start another run to avoid auologging conflicts
         mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
@@ -163,7 +174,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
     plot_roc_auc(model, X_data, y_data, graphs_dir)
 
     # Plot feature importance
-    plot_feature_importance(classifier_type, model, selected_features, graphs_dir, data_dir, model.get_params(),
+    plot_feature_importance(classifier_type, model, selected_features, graphs_dir, output_data_dir, model.get_params(),
                             X_data, y_data)
 
     # Plot calibration curve
@@ -171,7 +182,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
 
     # Plot decision tree
     class_names = np.array(['No_Oxygen_Need', 'Oxygen_Need'])
-    plot_decision_tree(classifier_type, model, X_data, class_names, data_dir, graphs_dir)
+    plot_decision_tree(classifier_type, model, X_data, class_names, output_data_dir, graphs_dir)
 
     # Plot a precision-recall curve
     plot_precision_recall(model, X_data, y_data, graphs_dir)

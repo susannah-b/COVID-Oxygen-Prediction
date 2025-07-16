@@ -47,7 +47,7 @@ if build_NN:
 
 # Create subdirectory to store data/config for the model
 model_storage_prelim = Path(f"{input_storage_prelim}/{run_name}")
-model_storage_ML = Path(f"{input_storage_ML}/{run_name}")
+model_storage_ML = Path(f"{input_storage_ML}/{run_name}") # TODO Not sure I need separate input/model storage since the config/preprocessing is the same for the run and only the post-model building is different and that's in seperate output folders, but combine later if needed
 model_storage_NN = Path(f"{input_storage_NN}/{run_name}")
 os.makedirs(model_storage_prelim, exist_ok=True)
 if build_ML:

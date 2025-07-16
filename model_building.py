@@ -114,17 +114,22 @@ KNN = config['model_building']['models_to_test']['KNN']
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 180)
 
-# Create output directories for the data
+# Create input directories for the data
 if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
     data_dir = 'training_data' # Combine with other training graphs if using training data
 else: # Put into input storage folder to prevent overwriting
     data_dir = f'inputs/ML/{run_name}/training_data'
 
+# Create output directories for the data
+output_data_dir = f'{data_dir}/ML'
+os.makedirs(output_data_dir, exist_ok=True)
+
 # Create output directory for the graphs
 if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
-    graphs_dir = 'training_graphs' # Combine with other training graphs if using training data
+    graphs_dir = 'training_graphs/ML' # Combine with other training graphs if using training data
 else: # Put into input storage folder to prevent overwriting
-    graphs_dir = f'inputs/ML/{run_name}/training_graphs'
+    graphs_dir = f'inputs/ML/{run_name}/training_graphs/ML'
+os.makedirs(graphs_dir, exist_ok=True) # Make the ML graph that's specific to the ML outputs
 
 ### Read in data
 # Train
@@ -139,7 +144,7 @@ X_test = pd.read_csv(X_path, index_col=0)
 y_test = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
 
 print(f"Training samples: {len(X_train)} | Test samples: {len(X_test)}")
-print(f"Feature dimensions: {X_train.shape[1]} | Classes: {y_train.unique().size(0)}")
+print(f"Feature dimensions: {X_train.shape[1]} | Classes: {y_train.nunique()}")
 
 # TODO: Note that some isaric columns were selected that might be innaccurate (eg day 1 x ray infiltrates as analogous to Bilateral CXR changes
 #  in Surrey data. It would be worth experimenting with dropping some of these here to see if the model improves (although if not feature-selected
@@ -880,9 +885,9 @@ with mlflow.start_run(run_name=run_name) as run:
     ])
 
     # Save input features for validation - JSON (human-readable) and joblib
-    with open(f"{data_dir}/input_features.json", "w") as f:
+    with open(f"{output_data_dir}/input_features.json", "w") as f:
         json.dump(X_train.columns.tolist(), f)
-    joblib.dump(X_train.columns.tolist(), f"{data_dir}/input_features.joblib")
+    joblib.dump(X_train.columns.tolist(), f"{output_data_dir}/input_features.joblib")
 
     # Train on full training data
     final_pipeline.fit(X_train, y_train)
@@ -917,9 +922,9 @@ with mlflow.start_run(run_name=run_name) as run:
         print(f"Unable to print features for this feature selection method: {str(e)}")
 
     # Save selected features for validation - JSON (human-readable) and joblib
-    with open(f"{data_dir}/selected_features.json", "w") as f:
+    with open(f"{output_data_dir}/selected_features.json", "w") as f:
         json.dump(selected_features, f)
-    joblib.dump(selected_features, f"{data_dir}/selected_features.joblib")
+    joblib.dump(selected_features, f"{output_data_dir}/selected_features.joblib")
 
     ### Log the final pipeline model
     # Create input example
@@ -943,6 +948,10 @@ with mlflow.start_run(run_name=run_name) as run:
     print(f"\nTest accuracy with best model ({classifier_type}): {test_accuracy:.4f}")
     print(f"Test F1 score with best model ({classifier_type}): {test_f1:.4f}")
 
+    # Save predictions to csv
+    model_results = pd.DataFrame({'Real values': y_test,'ML predictions': y_pred}, index=X_test.index)
+    model_results.to_csv(f"{output_data_dir}/Prediction_results_test_data.csv")
+
 ### GRAPHS #############################################################################################################
     # Plot PCA on the combined dataset - i.e. original data after feature selection
     with mlflow.start_run(nested=True): #Start another run to avoid auologging conflicts
@@ -962,7 +971,7 @@ with mlflow.start_run(run_name=run_name) as run:
     plot_roc_auc(final_pipeline, X_test, y_test, graphs_dir)
 
     # Plot feature importance
-    plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, data_dir, best_params,
+    plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, output_data_dir, best_params,
                             X_test, y_test)
 
     # Plot calibration curve
@@ -970,7 +979,7 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Plot decision tree
     class_names = np.array(['No_Oxygen_Need', 'Oxygen_Need'])
-    plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, data_dir, graphs_dir)
+    plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, output_data_dir, graphs_dir)
 
     # Plot a precision-recall curve
     plot_precision_recall(final_pipeline, X_test, y_test, graphs_dir)
@@ -987,9 +996,11 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Log artifacts
     mlflow.log_artifacts(graphs_dir, artifact_path="graphs")
-    mlflow.log_artifacts(data_dir, artifact_path="tables")
+    mlflow.log_artifacts(output_data_dir, artifact_path="tables")
+    #todo also log metric test accuracy, f1, anything else I generate
 
 ### STORE RESULTS IN NEW FOLDER ########################################################################################
+# todo: if running as a standalone script (not in wrapper) then it will copy whatever old files + NN files too. Ideally only select current run files + ML
 # Move and rename runs to a new directory for easier examination - results are copied from the MLflow tracking folder
 # (which is also available in the server) but renamed here for easier access based on the suffix defined in the config
 # file.
@@ -1000,7 +1011,7 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     # Determine file locations
     final_folder = Path("mlruns") / final_exp_id / final_run_id
     ml_artifacts = Path("mlartifacts") / final_exp_id / final_run_id
-    output_folder = Path("model_output/ML") / run_name
+    output_folder = Path("model_output") / run_name
     output_artifacts = output_folder
     data_folder = Path(data_dir)
     graph_folder = Path(graphs_dir)

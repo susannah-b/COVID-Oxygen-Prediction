@@ -50,6 +50,9 @@ from sklearn.metrics import confusion_matrix, classification_report
 # Bool to show additional detail
 show_detail = False
 
+# TODO TEMPORARY RUN NAME SETUP - need to adapt TML workflow over to this script, but for now just using a set run name
+run_name = '3_0716-133706_Testing_predictions' # will later be auto generated, but for now set this to a comparable ML model
+
 ### ARGPARSE TO SET RUN NAME ###########################################################################################
   # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
 parser = argparse.ArgumentParser()
@@ -105,11 +108,15 @@ nth_epoch = config['neural_network']['nth_epoch'] # Every nth epoch, print the l
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 180)
 
-# Create output directories for the data
+# Create input directories for the data
 if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
     data_dir = 'training_data' # Combine with other training graphs if using training data
 else: # Put into input storage folder to prevent overwriting
     data_dir = f'inputs/NN/{run_name}/training_data'
+
+# Create output directories for the data
+output_data_dir = f'{data_dir}/NN'
+os.makedirs(output_data_dir, exist_ok=True)
 
 # Create output directory for the graphs
 if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
@@ -391,25 +398,76 @@ for epoch in range(num_epochs):
     if (epoch == 0) or ((epoch + 1) % nth_epoch == 0) or (epoch == num_epochs - 1): # Print every nth epoch or first/last epoch
         print(f"Epoch {epoch + 1}, Loss: {total_loss / len(train_loader)}") # Logs the average loss per epoch to track improvement
 
-### EVALUATE THE MODEL #################################################################################################
-model.eval() # Puts the model in evaluation mode
-correct = 0
-total = 0
+### APPLY TO TEST DATA #################################################################################################
+def classify_O2(model, dataset_loader):
+    model.eval()
+    correct = 0
+    total = 0
+    all_probabilities = []
+    all_predictions = []
+    all_labels = []
 
-with torch.no_grad(): # Disables gradient computation to save memory and speed up evaluation
-    for batch in test_loader:
-        features = batch[0].to(device)
-        labels = batch[1].to(device)
+    with torch.no_grad():
+        for features, labels in dataset_loader:
+            features = features.to(device)
+            labels = labels.to(device)
+            # Forward pass
+            outputs = model(features).squeeze()
+            probabilities = torch.sigmoid(outputs)
+            predictions = (probabilities > 0.5).float()
+            # Collect results
+            correct += (predictions == labels).sum().item()
+            total += labels.size(0)
+            # Store results for analysis todo
+            all_probabilities.extend(probabilities.cpu().numpy())
+            all_predictions.extend(predictions.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+    accuracy = correct / total #todo for whole script, generally return f1 score not accuracy as my metric.
+    return accuracy, all_probabilities, all_predictions, all_labels
 
-        outputs = model(features).squeeze() # Passes the input IDs through the model to compute logits (unnormalized scores for each class)
-        probabilities = torch.sigmoid(outputs) # Convert to probabilities
-        predictions = (probabilities > 0.5).float()
-        correct += (predictions == labels).sum().item() # Counts the correct predictions in the current batch
-        total += labels.size(0) # Tracks the total samples processed
+# Apply model to validation dataset
+test_accuracy, test_probabilities, test_predictions, test_true_labels = classify_O2(model, test_loader)
+print(f"Test Accuracy: {test_accuracy:.4f}")
 
-accuracy = correct / total # Computes overall accuracy as the ratio of correct predictions to total samples
-print(f"Test Accuracy: {accuracy:.3f}")
+# TODO AI GEN TEMP OUTPUTS - find and make my own
+# Convert to class predictions and labels (to binary numbers from np.floats)
+test_class_predictions = [1 if p > 0.5 else 0 for p in test_probabilities]  # Predicted values
+test_class_labels = [int(label) for label in test_true_labels]  # True labels
 
+# Confusion matrix
+cm = confusion_matrix(test_class_labels, test_class_predictions)
+print("Confusion Matrix:")
+print(cm)
+
+# Classification report
+print("\nClassification Report:")
+print(classification_report(test_class_labels, test_class_predictions, target_names=["No O2", "O2"]))
+
+### Save predictions to csv
+NN_prediction_path = Path(f"{output_data_dir}/Prediction_results_test_data.csv")
+
+# Define path for possible pre-existing results file
+if not args.from_pipeline:
+    ML_prediction_path = Path(f"{data_dir}/ML/Prediction_results_test_data.csv") # Saved to cwd training data file - WARNING: this will add results to the latest ML results if present. The config for these may not be the same. To properly store based on run name (and same config), use the wrapper script.
+else:
+    ML_prediction_path = Path(f'model_output/{run_name}/training_data/ML/Prediction_results_test_data.csv') # Saved to input storage file for ML
+
+# Make df of results
+NN_results = pd.DataFrame({'NN predictions': test_class_predictions}, index=X_test_df.index)
+
+# Check if same run has a prediction results file for the traditional ML model
+if not os.path.exists(ML_prediction_path): # If it doesn't exist, make a new file todo is this path right !!!
+    NN_results.to_csv(f"{output_data_dir}/Prediction_results_test_data.csv")
+else: # If it does exist, append and copy
+    ML_results = pd.read_csv(ML_prediction_path, index_col=0) # Read in old results
+    # Delete pre-existing columns (i.e. if running as a standalone script, it won't append multiple results for multiple ML runs)
+    overlap = ML_results.columns.intersection(NN_results.columns)
+    ML_results = ML_results.drop(columns=overlap)
+    results_combined = pd.concat([ML_results, NN_results], axis=1)
+    results_combined.to_csv(ML_prediction_path)
+    shutil.copy2(ML_prediction_path, NN_prediction_path) # Copy back to NN results
+
+#todo should run as separate script
 ### LOAD IN VALIDATION DATA ############################################################################################
 # Set input directories
 if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
@@ -417,11 +475,15 @@ if not args.from_pipeline: # If calling as a standalone script, save to the curr
 else: # Put into input storage folder to prevent overwriting
     data_dir = f'inputs/NN/{run_name}/validation_data'
 
+# Create output directories for the data
+output_data_dir = f'{data_dir}/NN'
+os.makedirs(output_data_dir, exist_ok=True)
+
 # Create output directory for the graphs
 if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
-    graphs_dir = 'validation_graphs' # Combine with other validation graphs if using training data
+    graphs_dir = 'validation_graphs/NN' # Combine with other validation graphs if using training data
 else: # Put into input storage folder to prevent overwriting
-    graphs_dir = f'inputs/NN/{run_name}/validation_graphs'
+    graphs_dir = f'inputs/NN/{run_name}/validation_graphs/NN'
 
 dataset = "ISARIC"
 X_path = Path(__file__).parent / data_dir / f"{dataset}_X.csv"
@@ -430,7 +492,7 @@ X_data_df = pd.read_csv(X_path, index_col=0)
 y_data_df = pd.read_csv(y_path, index_col=0)
 
 ### PREPARE DATA #######################################################################################################
-# Get columns from X_train # todo temporary measure to filter to same features - see TML ex val for final example once full structure is implemented
+# Get columns from X_train # todo temporary measure to filter to same features - see TML ex val for final example once full structure is implemented # also can't remember why this is needed, if due to an error then resolve. why does surrey have more cols than val for this dataset? is it because some aren't filtered for missingness in validdation like X train
 X_train_col = X_train_df.columns
 X_data_filtered = X_data_df[X_train_col]
 # Ensure same column order
@@ -454,53 +516,51 @@ print(f"Feature dimensions: {X_data.shape[1]} | Classes: {y_data.unique().size(0
 
 ### RUN MODEL ON NEW DATA ##############################################################################################
 if validate:
-    def classify_O2(model, val_loader):
-        model.eval()
-        correct = 0
-        total = 0
-        all_probabilities = []
-        all_predictions = []
-        all_labels = []
-
-        with torch.no_grad():
-            for features, labels in val_loader:
-                features = features.to(device)
-                labels = labels.to(device)
-                # Forward pass
-                outputs = model(features).squeeze()
-                probabilities = torch.sigmoid(outputs)
-                predictions = (probabilities > 0.5).float()
-                # Collect results
-                correct += (predictions == labels).sum().item()
-                total += labels.size(0)
-                # Store results for analysis todo
-                all_probabilities.extend(probabilities.cpu().numpy())
-                all_predictions.extend(predictions.cpu().numpy())
-                all_labels.extend(labels.cpu().numpy())
-        accuracy = correct / total
-        return accuracy, all_probabilities, all_predictions, all_labels
-
     # Apply model to validation dataset
-    val_accuracy, probabilities, predictions, true_labels = classify_O2(model, val_loader)
+    val_accuracy, val_probabilities, val_predictions, val_true_labels = classify_O2(model, val_loader)
     print(f"Validation Accuracy: {val_accuracy:.4f}")
 
-    # TODO AI GEN TEMP GRAPHS
+    # TODO AI GEN TEMP OUTPUTS - find and make my own
     # Convert to class predictions and labels (to binary numbers from np.floats)
-    class_predictions = [1 if p > 0.5 else 0 for p in probabilities] # Predicted values
-    class_labels = [int(label) for label in true_labels] # True labels
-    print("class_predictions:\n", class_predictions)
-    print("class_labels:\n", class_labels)
-
+    val_class_predictions = [1 if p > 0.5 else 0 for p in val_probabilities] # Predicted values
+    val_class_labels = [int(label) for label in val_true_labels] # True labels
+    print("Predicted values:\n", val_class_predictions)
+    print("Real values:\n", val_class_labels)
 
     # Confusion matrix
-    cm = confusion_matrix(class_labels, class_predictions)
+    cm = confusion_matrix(val_class_labels, val_class_predictions)
     print("Confusion Matrix:")
     print(cm)
 
     # Classification report
     print("\nClassification Report:")
-    print(classification_report(class_labels, class_predictions, target_names=["No O2", "O2"]))
+    print(classification_report(val_class_labels, val_class_predictions, target_names=["No O2", "O2"]))
     ##########
+
+    ### Save predictions to csv
+    NN_prediction_path = Path(f"{output_data_dir}/Prediction_results_validation_data.csv")
+
+    # Define path for possible pre-existing results file
+    if not args.from_pipeline:
+        ML_prediction_path = Path(f"{data_dir}/ML/Prediction_results_validation_data.csv")  # Saved to cwd validation data file - WARNING: this will add results to the latest ML results if present. The config for these may not be the same. To properly store based on run name (and same config), use the wrapper script.
+    else:
+        ML_prediction_path = Path(
+            f'model_output/{run_name}/validation_data/ML/Prediction_results_validation_data.csv')  # Saved to input storage file for ML
+
+    # Make df of results
+    NN_results = pd.DataFrame({'NN predictions': val_class_predictions}, index=X_data_df.index)
+
+    # Check if same run has a prediction results file for the traditional ML model
+    if not os.path.exists(ML_prediction_path):  # If it doesn't exist, make a new file todo is this path right !!!
+        NN_results.to_csv(f"{output_data_dir}/Prediction_results_validation_data.csv")
+    else:  # If it does exist, append and copy
+        ML_results = pd.read_csv(ML_prediction_path, index_col=0)  # Read in old results
+        # Delete pre-existing columns (i.e. if running as a standalone script, it won't append multiple results for multiple ML runs)
+        overlap = ML_results.columns.intersection(NN_results.columns)
+        ML_results = ML_results.drop(columns=overlap)
+        results_combined = pd.concat([ML_results, NN_results], axis=1)
+        results_combined.to_csv(ML_prediction_path)
+        shutil.copy2(ML_prediction_path, NN_prediction_path)  # Copy back to NN results
 
 
 
