@@ -86,12 +86,12 @@ model_building:
     # Whether to copy the model_output to the designated folder for easier browsing
 
 
-
+# NOTE: currently using pre-existing ML settings. some (eg var threshold, model_choice) could be set individually
+# for each model, but for now for unaminity, both models use the same settings.
 neural_network:
-  # Configurations pertaining to the neural network script
-  input_data: 
-    # Set folder as required; should be a 'training_data' folder from the traditional model output/preliminary scripts (X_train, y_train, X_test, y_test .csv files)
-  var_threshold: 1e-10
-    # Change this to change the threshold for variance filtering
+  batch_size: 32
+    # Batch size for training the neural network
+  n_epochs: 300
+  nth_epoch: 50
 
 

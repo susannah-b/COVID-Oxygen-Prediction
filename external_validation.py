@@ -65,7 +65,7 @@ else: # Put into input storage folder to prevent overwriting
     graphs_dir = f'inputs/ML/{run_name}/validation_graphs'
 
 dataset = "ISARIC"
-X_path = Path(__file__).parent / data_dir / f"{dataset}_X.csv" # Note: Although the ISARIC data as saved as 'train' data, this is actually the wholedataset for validation/testing
+X_path = Path(__file__).parent / data_dir / f"{dataset}_X.csv"
 y_path = Path(__file__).parent / data_dir / f"{dataset}_y.csv"
 X_data = pd.read_csv(X_path, index_col=0)
 y_data = pd.read_csv(y_path, index_col=0)

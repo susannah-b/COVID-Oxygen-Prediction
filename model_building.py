@@ -137,8 +137,9 @@ X_path = Path(__file__).parent / data_dir / "Surrey_X_test.csv"
 y_path = Path(__file__).parent / data_dir / "Surrey_y_test.csv"
 X_test = pd.read_csv(X_path, index_col=0)
 y_test = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
-# Set pandas to display all columns
-pd.set_option('display.max_columns', None)
+
+print(f"Training samples: {len(X_train)} | Test samples: {len(X_test)}")
+print(f"Feature dimensions: {X_train.shape[1]} | Classes: {y_train.unique().size(0)}")
 
 # TODO: Note that some isaric columns were selected that might be innaccurate (eg day 1 x ray infiltrates as analogous to Bilateral CXR changes
 #  in Surrey data. It would be worth experimenting with dropping some of these here to see if the model improves (although if not feature-selected
@@ -485,7 +486,7 @@ type_translation = { # IMPROVE could just use the full name for simplicity and r
 def objective(params):
     # Get classifier type for each search space
     classifier_type = params['type']
-    del params['type']
+    del params['type']  # Remove from the search space
 
     # Set feature selector and parameters based on classifier type (as defined by basic_train)
     fs_params = params.pop('fs_params', {}) # Remove FS params from classifier search space
@@ -641,7 +642,7 @@ selector_param_spaces = { # Note: for new data, values may need to be tweaked as
   # Define each search space per model type. If in the top performing models (determined in basic train/manually), add to the overall search space
 
 best_spaces = [] # Initialise list
-### Define space for each model
+### Define space for each model  - input into objective as 'params'
 # SVM
 if type_translation['svm'] in best_models_fs:
     best_spaces.append({
@@ -878,7 +879,7 @@ with mlflow.start_run(run_name=run_name) as run:
         ('classifier', classifier)
     ])
 
-    # Save inuput features for validation - JSON (human-readable) and joblib
+    # Save input features for validation - JSON (human-readable) and joblib
     with open(f"{data_dir}/input_features.json", "w") as f:
         json.dump(X_train.columns.tolist(), f)
     joblib.dump(X_train.columns.tolist(), f"{data_dir}/input_features.joblib")
