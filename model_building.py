@@ -81,7 +81,7 @@ run_name = args.run_name
 if not args.from_pipeline:
     config_path = Path("config.yaml")
 else:
-    config_path = Path(f"inputs/ML/{run_name}/config.yaml")
+    config_path = Path(f"inputs/ML/{run_name}/config.yaml") #TODO - might restructure wrapper to remove this now mb outputs are separated (and for NN)
 
 # Read config file
 with open(config_path, "r") as f:
@@ -366,23 +366,6 @@ for fs_name in candidate_fs:
 # Initialise dict to store best results per model
 top_model_scores = {}
 
-#  WARNING override version vs using config for testing - delete  after testing:
-Logistic_regression = True
-SVM = True
-Random_forest = True
-AdaBoost = True
-Gradient_boosting = True
-XGBoost = True
-KNN = True
-
-# Logistic_regression = False
-# SVM = False
-# Random_forest = True
-# AdaBoost = False
-# Gradient_boosting = False
-# XGBoost = False
-# KNN = False
-
 # Dictionary to store the highest performing models and their feature selection methods
 best_models_fs = {}
 
@@ -508,7 +491,7 @@ def objective(params):
         all_params = {**selector_config['base_params'], **fs_params}
 
         ### Convert feature selection parameters to integers where required
-            # Note: same conversion is done for different selector types so check all expect integers
+            # Note: same conversion is done for different selector types
         if 'min_features_to_select' in all_params:
             all_params['min_features_to_select'] = int(all_params['min_features_to_select'])
 
@@ -554,7 +537,7 @@ def objective(params):
         mlflow.log_params({**params, "type": classifier_type, **{"fs_" + k: v for k, v in fs_params.items()}})
 
         # Incorporate feature selection into the pipeline
-        pipe = Pipeline([
+        pipe = Pipeline([ #todo was this meant to be deleted? immediately reassigned below
             ('int_to_float', IntToFloatTransformer()),
             ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
             ('classifier', clf)
@@ -805,7 +788,7 @@ print(best_config_df)
 
 ### TRAIN FINAL MODEL ##################################################################################################
 # Create a new MLflow Experiment
-mlflow.set_experiment("Oxygen Prediction - Surrey")
+mlflow.set_experiment("Oxygen Prediction Traditional ML - Surrey")
 
 # Train final model using the full training data
 mlflow.sklearn.autolog()
@@ -814,6 +797,7 @@ final_run_id = None
 final_exp_id = None
 with mlflow.start_run(run_name=run_name) as run:
     mlflow.set_tag("Run name", run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
+    mlflow.set_tag("ML type", "Traditional ML")
     mlflow.set_tag("Phase", "Final model training")
     mlflow.set_tag("Hyperopt MLflow run", hyperopt_name)
     mlflow.log_param("mlflow_run_name", run.info.run_name)
@@ -915,6 +899,7 @@ with mlflow.start_run(run_name=run_name) as run:
             selected_features = X_train.columns[selector.support_].tolist()
         else: # For other selector types, get features via transformation
             print("Feature selection method is incompatible with current handling to extract features - results are not printed.")
+            selected_features = X_train.columns.tolist()  # Set selected features to full X_train if not assigned by a feature selector
         # Print features
         print(f"\nSelected {len(selected_features)} features:")
         print(selected_features)
@@ -951,6 +936,10 @@ with mlflow.start_run(run_name=run_name) as run:
     # Save predictions to csv
     model_results = pd.DataFrame({'Real values': y_test,'ML predictions': y_pred}, index=X_test.index)
     model_results.to_csv(f"{output_data_dir}/Prediction_results_test_data.csv")
+
+    # Log some key metrics #IMPROVE - do more?
+    mlflow.log_metric("test_accuracy", test_accuracy)
+    mlflow.log_metric("test_f1", test_f1)
 
 ### GRAPHS #############################################################################################################
     # Plot PCA on the combined dataset - i.e. original data after feature selection
@@ -992,7 +981,7 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Print run id
     final_run_id = run.info.run_id
-    store_final_id = f"Run {run_name} for final model completed. Run ID is {final_run_id}"
+    store_final_id = f"Run {run_name} for final traditional machine learning model completed. Run ID is {final_run_id}"
 
     # Log artifacts
     mlflow.log_artifacts(graphs_dir, artifact_path="graphs")
