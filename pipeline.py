@@ -30,8 +30,8 @@ timestamp = datetime.now().strftime("%m%d-%H%M%S")
 run_number = config["general"]["run_number"]
 run_suffix = config["general"]["run_suffix"] or "Unspecified" # Set to unspecified if empty
 run_name = f"{run_number}_{timestamp}_{run_suffix}" # Unique ID for each model built
-build_ML = config["traditional"]
-build_NN = config["neural_network"]
+build_ML = config["build_traditional"]
+build_NN = config["build_neural_network"]
 
 ### Create an input folder for the model to store the data
 input_storage_prelim = Path("inputs") # Where feature_engineering.py and data_preprocessing output the data for both models
@@ -68,7 +68,7 @@ if build_NN:
 config["general"]["run_number"] = run_number + 1 # Update run number for next run
 with open(config_path, "w") as f:
     yaml.dump(config, f, sort_keys=False)
-
+# WARNING temporarily commented to test NN
 ### RUN PRELIMINARY SCRIPTS #############################################################################################
 # Run feature_engineering.py - this script takes the initial data and cleans/engineers features to prepare for the
   # preprocessing required for model construction.
@@ -99,6 +99,7 @@ shutil.rmtree(model_storage_prelim)
 
 #### RUN TRADITIONAL MODEL SCRIPTS #####################################################################################
 if build_ML:
+    print("\n\nBuilding traditional machine learning model...\n")
     # Run model_building.py - builds the model using the Surrey data
     process = subprocess.run(['python', 'model_building.py', '--run_name', run_name, '--from_pipeline'],text=True)
     # Check if failed
@@ -119,6 +120,7 @@ if build_ML:
 
 ### RUN NEURAL NETWORK SCRIPTS #########################################################################################
 if build_NN:
+    print("\n\nBuilding neural network...\n")
     # Run neural_network.py - builds the model using the Surrey data
     process = subprocess.run(['python', 'neural_network.py', '--run_name', run_name, '--from_pipeline'], text=True)
     # Check if failed
@@ -126,13 +128,13 @@ if build_NN:
         print("Warning: neural_network.py failed")
         exit(1)
 
-    # # Check whether to validate # todo adapt validation to nn (could run inside other script if small)
-    # validate = config["general"]["validate"]
-    #
-    # if validate:
-    #     # Run external_validation.py - fits the model to the validation data
-    #     process = subprocess.run(['python', 'external_validation.py', '--run_name', run_name, '--from_pipeline'], text=True)
-    #     # Check if failed
-    #     if process.returncode != 0:
-    #         print("Warning: external_validation.py failed")
-    #         exit(1)
+    # Check whether to validate
+    validate = config["general"]["validate"]
+
+    if validate:
+        # Run external_validation.py - fits the model to the validation data
+        process = subprocess.run(['python', 'external_validation_NN.py', '--run_name', run_name, '--from_pipeline'], text=True)
+        # Check if failed
+        if process.returncode != 0:
+            print("Warning: external_validation.py failed")
+            exit(1)

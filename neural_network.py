@@ -2,12 +2,11 @@
 # Run this script to build and run a neural network to pedict oxygen need (O2 Req.).
 
 ### SETUP ##############################################################################################################
-from datasets import load_dataset
 import torch
-from torch.utils.data import TensorDataset, DataLoader
 import torch.nn as nn
 from skorch import NeuralNetClassifier
 from skorch.callbacks import Callback
+from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -35,8 +34,6 @@ import mlflow.sklearn
 from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
 import warnings
-
-from external_validation import selected_features
 from functions import basic_train, port_in_use, pca_original, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
     plot_pca_predicted, plot_confusion_matrix, plot_fs_performance
@@ -54,6 +51,16 @@ from sklearn.base import clone
 
 # Bool to show additional detail
 show_detail = False
+
+### SET RANDOM SEEDS ###################################################################################################
+# todo do for other scripts
+
+# Set global random seeds
+torch.manual_seed(42) # PyTorch CPU
+torch.cuda.manual_seed_all(42) # PyTorch GPU (if available)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 
 ### ARGPARSE TO SET RUN NAME ###########################################################################################
   # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
@@ -363,33 +370,6 @@ class O2Classifier(nn.Module): # TODO decide/hyperopt layer #/activation functio
         output = self.fc2(x).squeeze(1) # Outputs the logits for the number of classes.
         return output
 
-### DEFINE APPLICATION TO TEST DATA ####################################################################################
-def classify_O2(model, dataset_loader): #todo think this is redundant with skorch/pipeline
-    model.eval()
-    correct = 0
-    total = 0
-    all_probabilities = []
-    all_predictions = []
-    all_labels = []
-
-    with torch.no_grad():
-        for features, labels in dataset_loader:
-            features = features.to(device)
-            labels = labels.to(device)
-            # Forward pass
-            outputs = model(features).squeeze()
-            probabilities = torch.sigmoid(outputs)
-            predictions = (probabilities > 0.5).float()
-            # Collect results
-            correct += (predictions == labels).sum().item()
-            total += labels.size(0)
-            # Store results for analysis
-            all_probabilities.extend(probabilities.cpu().numpy())
-            all_predictions.extend(predictions.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-    accuracy = correct / total
-    return accuracy, all_probabilities, all_predictions, all_labels
-
 ### OBJECTIVE FUNCTION FOR HYPEROPT PARAMETER TUNING ###################################################################
 # TODO: again see TML for structure. After/during setting up NN hyperopt refer back so theyre similar in structure
 
@@ -500,6 +480,7 @@ if not args.from_pipeline:
 ### TRAIN FINAL MODEL ##################################################################################################
 #todo many parts were deleted from TML framework, so copy in later
 
+# Set device
 device = "cuda" if torch.cuda.is_available() else "cpu" # Automatically uses a GPU if available; otherwise, defaults to the CPU
 
 # Create a new MLflow Experiment
@@ -529,51 +510,77 @@ with mlflow.start_run(run_name=run_name) as run:
         all_params = {**selector_config['base_params']} # TODO ', **fs_params' was removed from here as hyperopt training hasn't been done yet - will just use the default FS
         selector = selector_config['class'](**all_params)
 
-    # Create the final pipeline with feature selection and classifier
-    pre_pipeline = Pipeline([
-        ('preprocessor', Pipeline([
-            ('int_to_float', IntToFloatTransformer()),
-            ('var_thresh', VarianceThreshold(threshold=0.0)),
-            ('scaler', StandardScaler()),
-        ])),
+    # Create the preprocessing pipeline
+    preprocessor = Pipeline([
+        ('int_to_float', IntToFloatTransformer()),
+        ('var_thresh', VarianceThreshold(threshold=0.0)),
+        ('scaler', StandardScaler()),
         ('feature_selector', selector if feature_selection else 'passthrough')
     ])
 
-    # Clone to avoid double fitting
-    cloned_pre_pipeline = clone(pre_pipeline)
+    # Fit preprocessor
+    X_train_original = X_train.copy() # Stores original df
+    X_train_processed = preprocessor.fit_transform(X_train, y_train) # Converts to a numpy array on output
+    X_test_processed = preprocessor.transform(X_test)
+    input_dim = X_train_processed.shape[1]
 
-    X_preprocessed = pre_pipeline.fit_transform(X_train, y_train)
-    input_dim = X_preprocessed.shape[1]
+    ### CREATE DATALOADERS #################################################################################################
+    # Convert X data to PyTorch tensors
+    X_train_dl = torch.tensor(X_train_processed, dtype=torch.float32)
+    X_test_dl = torch.tensor(X_test_processed, dtype=torch.float32)
 
-    final_pipeline = Pipeline([ # Has to be created after input_dim is finalised through feature selection
-        ('preprocessor_and_selector', cloned_pre_pipeline),
-        ('classifier',  NeuralNetClassifier(O2Classifier, # todo can some of these be explored in basic train? and passed as variables here
-                                            module__input_dim=input_dim,
-                                            max_epochs=n_epochs,
-                                            lr=learn_rate,
-                                            criterion=nn.BCEWithLogitsLoss,
-                                            optimizer=torch.optim.Adam,
-                                            batch_size=batch_size,
-                                            iterator_train__shuffle=True,
-                                            device=device,
-                                            verbose=0 # todo can change this to 1 if needed - could be config variable
-                                            ) # todo removed Callback from here - but make sure you have a way to check how many epochs are needed. probably graphs. or do custom callback
-        )])
+    # Convert labels and ensure proper shape (64-bit integer to 1D label tensor)
+    y_train_dl = torch.tensor(y_train.values, dtype=torch.float32).squeeze()
+    y_test_dl = torch.tensor(y_test.values, dtype=torch.float32).squeeze()
+
+    # Create TensorDatasets
+    train_dataset = TensorDataset(X_train_dl, y_train_dl)
+    test_dataset = TensorDataset(X_test_dl, y_test_dl)
+
+    # Create DataLoaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
+    print(f"Training samples: {len(train_dataset)} | Test samples: {len(test_dataset)}")
+    print(f"Feature dimensions: {X_train.shape[1]} | Classes: {len(np.unique(y_train))}")
+
+    # Train the neural networks
+    model = O2Classifier(input_dim).to(device)
+    criterion = nn.BCEWithLogitsLoss()  # Binary Cross Entropy with built-in sigmoid
+    optimiser = torch.optim.Adam(model.parameters(), lr=5e-4)  # Updates the model’s parameters to minimize the loss function
+
+    for epoch in range(n_epochs):
+        model.train()  # Sets the model to training mode, enabling operations like dropout (if present)
+        total_loss = 0
+        for batch in train_loader:
+            # Move the batch data to the same device as the model (GPU or CPU)
+            features = batch[0].to(device)  # Selects input features
+            labels = batch[1].to(device)  # Selects labels
+
+            # Forward pass
+            outputs = model(features).squeeze()
+            loss = criterion(outputs, labels)  # Calculates the classification error between predictions (outputs) and true labels (labels) using the cross-entropy loss
+
+            # Backward pass and optimization
+            optimiser.zero_grad()  # Resets gradients from the previous iteration to prevent accumulation
+            loss.backward()  # Computes the gradients of the loss with respect to the model parameters via backpropagation
+            optimiser.step()  # Updates the model parameters using the computed gradients
+
+            total_loss += loss.item()  # Accumulates the total loss for the epoch to monitor training progress
+
+        if (epoch == 0) or ((epoch + 1) % nth_epoch == 0) or (epoch == n_epochs - 1):  # Print every nth epoch or first/last epoch
+            print(f"Epoch {epoch + 1}, Loss: {total_loss / len(train_loader)}")  # Logs the average loss per epoch to track improvement
 
     # Save input features for validation - JSON (human-readable) and joblib
     with open(f"{output_data_dir}/input_features.json", "w") as f:
-        json.dump(X_train.columns.tolist(), f)
-    joblib.dump(X_train.columns.tolist(), f"{output_data_dir}/input_features.joblib")
-
-    # Train on full training data
-    final_pipeline.fit(X_train, y_train)
+        json.dump(X_train_original.columns.tolist(), f)
+    joblib.dump(X_train_original.columns.tolist(), f"{output_data_dir}/input_features.joblib")
 
     if show_detail:
         # Track retained features post-preprocessing
-        preprocessor = pre_pipeline.named_steps['preprocessor']
+        preprocessor = preprocessor.named_steps['preprocessor']
         var_thresh = preprocessor.named_steps['var_thresh']
         retained_mask = var_thresh.get_support()
-        retained_features = X_train.columns[retained_mask]
+        retained_features = X_train_original.columns[retained_mask] #todo X_train_original instead of X train i think, as X_train was preprocessed and converted to numpy
         print("Features after thresholding:", len(retained_features.tolist()))
         show_features = False  # Enable or disable as required
         if show_features:
@@ -583,7 +590,7 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Print the selected features post-feature selection method # WARNING Not tested with all methods
     try:
-        selector = pre_pipeline.named_steps['feature_selector']
+        selector = preprocessor.named_steps['feature_selector']
         if hasattr(selector, 'get_support'):  # Standard scikit-learn selector
             support_mask = selector.get_support()
             selected_features = X_train.columns[support_mask].tolist()
@@ -603,15 +610,65 @@ with mlflow.start_run(run_name=run_name) as run:
         json.dump(selected_features, f)
     joblib.dump(selected_features, f"{output_data_dir}/selected_features.joblib")
 
-    ### Log the final pipeline model
-    # Infer model signature
-    signature = infer_signature(X_train, final_pipeline.predict(X_train))
-    mlflow.sklearn.log_model(final_pipeline, "best_model", signature=signature)
+    # Reconstruct dataframe after preprocessing/dtype conversion #TODO not sure if this is needed or interferes - check. Doing it now because I understand the workflow, but can delete if not used
+    X_train = X_train_original[selected_features]
 
-    # Apply model to test dataset
-    y_pred = final_pipeline.predict(X_test)
-    y_proba = final_pipeline.predict_proba(X_test)
-    y_proba = y_proba[:, 1] # Skorch outputs probabilities for both classes; we want positive only
+    ### Log the final pipeline preprocessor and model
+    # Save preprocessor
+    preprocessor_path = f"{data_dir}/preprocessor.joblib"
+    joblib.dump(preprocessor, preprocessor_path)
+
+    # Save model state
+    model.to("cpu")
+    model_path = f"{data_dir}/model.pt"
+    torch.save({'model_state_dict': model.state_dict(),'input_dim': input_dim}, model_path)
+
+    # Log artifacts
+    mlflow.log_artifact(preprocessor_path)
+    mlflow.log_artifact(model_path)
+
+    # Log custom combined predictor
+    class OxygenPredictor(mlflow.pyfunc.PythonModel):
+        def __init__(self):
+            super().__init__()
+            self.input_dim = None
+
+        def load_context(self, context):
+            self.preprocessor = joblib.load(context.artifacts["preprocessor"])
+            # Load model metadata
+            model_data = torch.load(context.artifacts["pytorch_model"])
+            self.input_dim = model_data['input_dim']
+            # Reconstruct model
+            self.model = O2Classifier(self.input_dim)
+            self.model.load_state_dict(model_data['model_state_dict'])
+            self.model.eval()
+
+        def predict(self, context, model_input):
+            processed = self.preprocessor.transform(model_input)
+            tensor = torch.tensor(processed, dtype=torch.float32)
+            with torch.no_grad():
+                outputs = self.model(tensor)
+                return torch.sigmoid(outputs).numpy()
+
+
+    # Log combined model
+    mlflow.pyfunc.log_model(artifact_path="best_model",
+                            python_model=OxygenPredictor(),
+                            artifacts={
+                                "preprocessor": preprocessor_path,
+                                "pytorch_model": model_path
+                            })
+
+    # Apply model to test
+
+    # 3. Get predictions
+    model.eval()
+    with torch.no_grad():
+        logits = model(X_test_dl)
+        y_proba = torch.sigmoid(logits).cpu().numpy()
+        y_pred = (y_proba > 0.5).astype(int)
+
+    # Calculate metrics
     test_accuracy = accuracy_score(y_test, y_pred)
     test_f1 = f1_score(y_test, y_pred)
     test_roc_auc = roc_auc_score(y_test, y_proba)
@@ -689,11 +746,6 @@ with mlflow.start_run(run_name=run_name) as run:
     # Log artifacts
     mlflow.log_artifacts(graphs_dir, artifact_path="graphs")
     mlflow.log_artifacts(output_data_dir, artifact_path="tables")
-    #todo also log metric test accuracy, f1, anything else I generate
-
-
-
-
 
 ### STORE RESULTS IN NEW FOLDER ########################################################################################
 # todo: if running as a standalone script (not in wrapper) then it will copy whatever old files + ML files too. Ideally only select current run files + NN
@@ -741,8 +793,6 @@ print(store_final_id)
 
 
 
-
-
 # TODO
 #  Needs to be updated for TML model framework; current version is a basic version to test concept - including validation file
 
@@ -768,55 +818,4 @@ print(store_final_id)
 # Use learning rate schedulers
 # Cross-validation
 # Tune architecture and hyperparameters
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# TODO
-# Adjust hyperparams:
-    # learning rate (smaller = better but more computational)
-    # batch size (larger = smoother gradients more RAM, smaller = may generalise better)
-    # epochs (better learning but watch for overfitting (monitor validation performance))
-# Model architecture:
-    # More layers is more complex patterns but require more data and careful regularization
-    # Activation Functions: Experiment with ReLU, LeakyReLU, or GELU for better non-linearity and learning dynamics
-# Overfitting vs underfitting:
-    # If performs well on test but not train/val: Add dropout, use regularization (e.g., L2), or gather more data
-    # If failing to capture patterns in training: Add layers, increase training time, or adjust hyperparameters
-
-# Batch size and epoch number can be chosen by trial and error (or function?)
-
-# Needed for my NN:
-    # This data doesn't have headers, which idk if I can preserve or load later
-    # How many layers do I need? 'heuristics or copy others'
-    # In forward you can: skip connections, attention mechanisms, use conditionals, and do multiple inputs or outputs. Likely more.
-
-# Add regularization (dropout, weight decay)
-# Use learning rate schedulers
-# Cross-validation
-# Tune architecture and hyperparameters
+# Early stopping for overfitting

@@ -4,8 +4,8 @@
 # Note: some settings primarily used for testing remain in the Python scripts which can be changed as needed.
 
 # Which model to build:
-traditional: True
-neural_network: True
+build_traditional: false
+build_neural_network: true
   # Used in the wrapper script to determine which model type to build
 
 general:
