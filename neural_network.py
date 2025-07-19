@@ -62,7 +62,6 @@ torch.cuda.manual_seed_all(42) # PyTorch GPU (if available)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-
 ### ARGPARSE TO SET RUN NAME ###########################################################################################
   # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
 parser = argparse.ArgumentParser()
@@ -111,6 +110,7 @@ n_epochs = config['neural_network']['n_epochs'] # How many epochs to run
 nth_epoch = config['neural_network']['nth_epoch'] # Every nth epoch, print the loss
 learn_rate = float(config['neural_network']['learning_rate']) # Learning rate for NN #todo hypertune?
 early_stopping = config['neural_network']['early_stopping']
+validation_size = config['neural_network']['validation_size']
 
 ### READ IN DATA #######################################################################################################
 # Set pandas to display all columns and longer rows # IMPROVE remove in final version
@@ -150,13 +150,12 @@ y_test = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
 y_train = y_train_full.astype(np.float32)
 y_test = y_test.astype(np.float32)
 
+# Print summary
 print(f"Total training samples: {len(X_train_full)} | Test samples: {len(X_test)}")
 print(f"Feature dimensions: {X_train_full.shape[1]} | Classes: {y_train.nunique()}")
 
-if early_stopping:
-    X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=0.15, stratify=y_train_full)
-else:
-    X_train = X_train_full
+# Do test/validation split for the early stopping check (final model is trained on X_train_full)
+X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=validation_size, stratify=y_train_full)
 
 #TODO check that X_train is now correct elsewhere in code, post 2nd split (eg for graphs, anytihng that required len(X_train)? - is pca right?
 ### PCA ON ORIGINAL DATA ###############################################################################################
@@ -486,15 +485,15 @@ if not args.from_pipeline:
 #todo adapt TML for NN
 
 ### EARLY STOPPING #####################################################################################################
-
 # Basic setup for early stopping criteria
 patience = 5  # Epochs to wait after no improvement
-delta = 0.008  # Minimum change in the loss
+delta = 0.01  # Minimum change in the loss
 best_val_loss = float("inf")  # Best validation loss to compare against
 no_improvement_count = 0 # Count epochs since improvement
 
+# Define class
 class EarlyStopping:
-    def __init__(self, patience=5, delta=0, verbose=False):
+    def __init__(self, patience=5, delta=0.0, verbose=False):
         self.patience = patience
         self.delta = delta
         self.verbose = verbose
@@ -503,19 +502,15 @@ class EarlyStopping:
         self.stop_training = False
 
     def check_early_stop(self, val_loss):
-        if self.best_loss is None or val_loss < self.best_loss - self.delta:
+        if self.best_loss is None or val_loss < self.best_loss - self.delta:  #If loss is improving
             self.best_loss = val_loss
             self.no_improvement_count = 0
-        else:
+        else: # Track duration without improvement and trigger break
             self.no_improvement_count += 1
             if self.no_improvement_count >= self.patience:
                 self.stop_training = True
                 if self.verbose:
                     print("Stopping early as no improvement has been observed.")
-
-# Initialize early stopping
-if early_stopping:
-    early_stopping = EarlyStopping(patience=patience, delta=delta, verbose=True)
 
 ### TRAIN FINAL MODEL ##################################################################################################
 #todo many parts were deleted from TML framework, so copy in later
@@ -531,6 +526,7 @@ mlflow.pytorch.autolog()
 store_final_id = None # Initialise value to store run ID to print at end
 final_run_id = None
 final_exp_id = None
+# Start MLFlow run to track
 with mlflow.start_run(run_name=run_name) as run:
     mlflow.set_tag("Run name", run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
     mlflow.set_tag("ML type", "Neural network")
@@ -558,93 +554,187 @@ with mlflow.start_run(run_name=run_name) as run:
         ('feature_selector', selector if feature_selection else 'passthrough')
     ])
 
-    # Fit preprocessor
-    X_train_original = X_train.copy() # Stores original df (excluding X val)
-    X_train_processed = preprocessor.fit_transform(X_train, y_train) # Converts to a numpy array on output
-    if early_stopping:
-        X_val_processed = preprocessor.fit_transform(X_val, y_val)
+    # Fit preprocessor on full training data
+    preprocessor.fit(X_train_full, y_train_full)
+    # Transform all datasets using the preprocessor
+    X_train_original = X_train.copy() # Store original data
+    X_train_full_processed = preprocessor.transform(X_train_full)
+    X_train_processed = preprocessor.transform(X_train)
+    X_val_processed = preprocessor.transform(X_val)
     X_test_processed = preprocessor.transform(X_test)
-    input_dim = X_train_processed.shape[1]
 
     ### CREATE DATALOADERS #################################################################################################
-    # Convert X data to PyTorch tensors
+    # Convert X data to PyTorch tensors #todo for this section, not sure if these are reassigned. eg X_train i think isn't used but X_full might be?
     X_train_dl = torch.tensor(X_train_processed, dtype=torch.float32)
-    if early_stopping:
-        X_val_dl = torch.tensor(X_val_processed, dtype=torch.float32)
+    X_train_full_dl = torch.tensor(X_train_full_processed, dtype=torch.float32)
+    X_val_dl = torch.tensor(X_val_processed, dtype=torch.float32)
     X_test_dl = torch.tensor(X_test_processed, dtype=torch.float32)
 
     # Convert labels and ensure proper shape (64-bit integer to 1D label tensor)
     y_train_dl = torch.tensor(y_train.values, dtype=torch.float32).squeeze()
-    if early_stopping:
-        y_val_dl = torch.tensor(y_val.values, dtype=torch.float32).squeeze()
+    y_train_full_dl = torch.tensor(y_train_full.values, dtype=torch.float32).squeeze()
+    y_val_dl = torch.tensor(y_val.values, dtype=torch.float32).squeeze()
     y_test_dl = torch.tensor(y_test.values, dtype=torch.float32).squeeze()
 
     # Create TensorDatasets
     train_dataset = TensorDataset(X_train_dl, y_train_dl)
-    if early_stopping:
-        val_dataset = TensorDataset(X_val_dl, y_val_dl)
-        val_sample_len = len(val_dataset)
-    else:
-        val_sample_len = 0
+    train_full_dataset = TensorDataset(X_train_full_dl, y_train_full_dl)
+    val_dataset = TensorDataset(X_val_dl, y_val_dl)
+    val_sample_len = len(val_dataset)
     test_dataset = TensorDataset(X_test_dl, y_test_dl)
 
     # Create DataLoaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    if early_stopping:
-        val_loader = DataLoader(val_dataset, batch_size=15, shuffle=False) #TODO custom batch size or hyperopt
+    train_full_loader = DataLoader(train_full_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=12, shuffle=False) #TODO custom batch size or hyperopt
 
     print(f"Training samples: {len(train_dataset)} | Validation samples: {val_sample_len} | Test samples: {len(test_dataset)}")
     print(f"Feature dimensions: {X_train.shape[1]} | Classes: {len(np.unique(y_train))}")
 
-    # TRAIN NEURAL NETWORK #############################################################################################
-    model = O2Classifier(input_dim).to(device)
+    ### TRAIN NEURAL NETWORK ###########################################################################################
     criterion = nn.BCEWithLogitsLoss()  # Binary Cross Entropy with built-in sigmoid
-    optimiser = torch.optim.Adam(model.parameters(), lr=5e-4)  # Updates the model’s parameters to minimize the loss function
 
-    for epoch in range(n_epochs):
-        # Training phase
-        model.train()  # Sets the model to training mode, enabling operations like dropout (if present)
-        train_loss = 0
-        for batch in train_loader:
-            # Move the batch data to the same device as the model (GPU or CPU)
-            features = batch[0].to(device)  # Selects input features
-            labels = batch[1].to(device)  # Selects labels
+    # Function to train the model - applied to both cross validation and the final model with no validation/early stopping
+    def train_model(model, train_loader, val_loader, es_handler, verbose=1):
+        all_preds = []
+        all_labels = []
+        epoch_stop = n_epochs  # Initialise as max range of epochs
+        # Training loop
+        for epoch in range(n_epochs):
+            # Training phase
+            model.train()  # Sets the model to training mode, enabling operations like dropout (if present)
+            train_loss = 0
+            for batch_idx, batch in enumerate(train_loader):
+                # Move the batch data to the same device as the model (GPU or CPU)
+                features = batch[0].to(device)  # Selects input features
+                labels = batch[1].to(device)  # Selects labels
 
-            # Forward pass
-            outputs = model(features).squeeze()
-            loss = criterion(outputs, labels)  # Calculates the classification error between predictions (outputs) and true labels (labels) using the cross-entropy loss
+                # Forward pass
+                outputs = model(features).squeeze()
+                loss = criterion(outputs, labels)  # Calculates the classification error between predictions (outputs) and true labels (labels) using the cross-entropy loss
 
-            # Backward pass and optimization
-            optimiser.zero_grad()  # Resets gradients from the previous iteration to prevent accumulation
-            loss.backward()  # Computes the gradients of the loss with respect to the model parameters via backpropagation
-            optimiser.step()  # Updates the model parameters using the computed gradients
+                # Backward pass and optimization
+                optimiser.zero_grad()  # Resets gradients from the previous iteration to prevent accumulation
+                loss.backward()  # Computes the gradients of the loss with respect to the model parameters via backpropagation
+                optimiser.step()  # Updates the model parameters using the computed gradients
 
-            train_loss += loss.item()  # Accumulates the total loss for the epoch to monitor training progress
-        avg_train_loss = train_loss / len(train_loader)
+                train_loss += loss.item()  # Accumulates the total loss for the epoch to monitor training progress
 
-        if (epoch == 0) or ((epoch + 1) % nth_epoch == 0) or (epoch == n_epochs - 1):  # Print every nth epoch or first/last epoch
-            print(f"Epoch {epoch + 1}, Loss: {avg_train_loss}")  # Logs the average loss per epoch to track improvement
+            avg_train_loss = train_loss / len(train_loader)
 
+            # Print loss
+            if verbose:
+                if (epoch == 0) or ((epoch + 1) % nth_epoch == 0) or (epoch == n_epochs - 1):  # Print every nth epoch or first/last epoch
+                    print(f"Epoch {epoch + 1}, Loss: {avg_train_loss}")  # Logs the average loss per epoch to track improvement
+
+            # Validation phase - for CV only
+            if es_handler is not None: # Run early stopping
+                model.eval()
+                val_loss = 0
+                with torch.no_grad():
+                    for batch in val_loader:
+                        features = batch[0].to(device)
+                        labels = batch[1].to(device)
+                        output = model(features).squeeze()
+                        loss = criterion(output, labels)
+                        val_loss += loss.item()
+
+                val_loss = val_loss / len(val_loader)
+
+                if early_stopping:
+                    # Check early stopping condition
+                    es_handler.check_early_stop(val_loss)
+                    if es_handler.stop_training:
+                        print(f"Early stopping at epoch {epoch}")
+                        epoch_stop = epoch + 1 #todo why is this greyed out as 'not used'
+                        break
+
+            # Calculate final F1 score on validation set
+            if val_loader is not None:
+                model.eval()
+                with torch.no_grad():
+                    for batch in val_loader:
+                        features = batch[0].to(device)
+                        labels = batch[1].to(device)
+                        output = model(features).squeeze()
+
+                        preds = torch.sigmoid(output) > 0.5
+                        all_preds.extend(preds.cpu().numpy())
+                        all_labels.extend(labels.cpu().numpy())
+
+        return f1_score(all_labels, all_preds), epoch_stop
+
+    ### CROSS-VALIDATE #################################################################################################
+    # Call function to train model
+    kfold = StratifiedKFold(n_splits=3, shuffle=True, random_state=42) # Set to three due to small dataset sizes
+    f1_scores = []
+    stopping_epochs = [] # best epochs per fold
+    for fold, (train_idx, val_idx) in enumerate(kfold.split(X_train, y_train)):
+
+        # Create datasets for this fold
+        X_train_fold = X_train.iloc[train_idx]
+        y_train_fold = y_train.iloc[train_idx] if hasattr(y_train, 'iloc') else y_train[train_idx]
+        X_val_fold = X_train.iloc[val_idx]
+        y_val_fold = y_train.iloc[val_idx] if hasattr(y_train, 'iloc') else y_train[val_idx]
+
+        # Fit preprocessor on training fold only (prevent data leakage)
+        X_train_fold_processed = preprocessor.fit_transform(X_train_fold, y_train_fold)
+        X_val_fold_processed = preprocessor.transform(X_val_fold)  # Only transform, don't fit
+
+        # Create data loaders for this fold
+        train_dataset_fold = TensorDataset(
+            torch.FloatTensor(X_train_fold_processed),
+            torch.FloatTensor(y_train_fold.values if hasattr(y_train_fold, 'values') else y_train_fold)
+        )
+        val_dataset_fold = TensorDataset(
+            torch.FloatTensor(X_val_fold_processed),
+            torch.FloatTensor(y_val_fold.values if hasattr(y_val_fold, 'values') else y_val_fold)
+        )
+
+        train_loader_fold = DataLoader(train_dataset_fold, batch_size=batch_size, shuffle=True)
+        val_loader_fold = DataLoader(val_dataset_fold, batch_size=12, shuffle=False) # todo batch size - will also error if it creates a size of 1 at any point
+
+        # Initialize fresh model and early stopping for this fold
+        input_dim_fold = X_train_fold_processed.shape[1]  # Get input dim from processed data
+        model = O2Classifier(input_dim_fold).to(device)
+        optimiser = torch.optim.Adam(model.parameters(), lr=5e-4)
+
+        # Reset early stopping for this fold
         if early_stopping:
-            # Validation phase
-            model.eval()
-            val_loss = 0
-            with torch.no_grad():
-                for batch in val_loader:
-                    features = batch[0].to(device)
-                    labels = batch[1].to(device)
-                    output = model(features).squeeze()
-                    loss = criterion(output, labels)
-                    val_loss += loss.item()
-            avg_val_loss = val_loss / len(val_loader)
+            es_handler = EarlyStopping(patience=patience, delta=delta, verbose=True)
+        else:
+            es_handler = None
 
-            # Check early stopping condition
-            early_stopping.check_early_stop(val_loss)
+        # Train and get F1 score
+        f1, epoch_stop = train_model(model, train_loader_fold, val_loader_fold, es_handler, verbose=False)
+        print(f"Fold {fold + 1} F1 Score: %.4f\n" % f1)
+        mlflow.log_metric(f"Fold {fold + 1} F1 Score", f1)
+        f1_scores.append(f1)
+        stopping_epochs.append(epoch_stop)
 
-            if early_stopping.stop_training:
-                print(f"Early stopping at epoch {epoch}")
-                break
+     # Find average best_epoch from CV
+    avg_best_epoch = int(np.mean(stopping_epochs))
+    print(f"Average best epoch: {avg_best_epoch}")
 
+    # Evaluate the model after CV wit hF1
+    mean = np.mean(f1_scores)
+    std = np.std(f1_scores)
+    print("Cross-Validation Results: %.2f%% (+/- %.2f%%)" % (mean * 100, std * 100))
+
+    ### TRAIN FINAL MODEL ON TRAINING SET ##############################################################################
+    # Fit preprocessor on full training data
+    input_dim_final = X_train_full_processed.shape[1]
+
+    print(f"Final model input dimension: {input_dim_final}")
+    print(f"Test data dimension after preprocessing: {X_test_processed.shape[1]}")
+
+    final_model = O2Classifier(input_dim_final).to(device) # Initialise fresh model for final training on full training dataset (no validation set)
+    optimiser = torch.optim.Adam(final_model.parameters(), lr=5e-4)  # Updates the model’s parameters to minimize the loss function
+
+    # Train final model for the average best epoch count (no early stopping needed)
+    print(f"\nNow training final model with {avg_best_epoch} epochs.\n")
+    n_epochs = avg_best_epoch  # Set to average best epoch
+    train_model(final_model, train_full_loader, None, es_handler=None, verbose=True)
 
     # Save input features for validation - JSON (human-readable) and joblib
     with open(f"{output_data_dir}/input_features.json", "w") as f:
@@ -669,12 +759,12 @@ with mlflow.start_run(run_name=run_name) as run:
         selector = preprocessor.named_steps['feature_selector']
         if hasattr(selector, 'get_support'):  # Standard scikit-learn selector
             support_mask = selector.get_support()
-            selected_features = X_train.columns[support_mask].tolist()
+            selected_features = X_train_full.columns[support_mask].tolist()
         elif hasattr(selector, 'support_'):  # Other selector types
-            selected_features = X_train.columns[selector.support_].tolist()
+            selected_features = X_train_full.columns[selector.support_].tolist()
         else:  # For other selector types, get features via transformation
             print("Feature selection method is incompatible with current handling to extract features - results are not printed.")
-            selected_features = X_train.columns.tolist() # Set selected features to full X_train if not assigned by a feature selector
+            selected_features = X_train_full.columns.tolist() # Set selected features to full X_train if not assigned by a feature selector
         # Print features
         print(f"\nSelected {len(selected_features)} features:")
         print(selected_features)
@@ -695,9 +785,9 @@ with mlflow.start_run(run_name=run_name) as run:
     joblib.dump(preprocessor, preprocessor_path)
 
     # Save model state
-    model.to("cpu")
+    final_model.to("cpu")
     model_path = f"{data_dir}/model.pt"
-    torch.save({'model_state_dict': model.state_dict(),'input_dim': input_dim}, model_path)
+    torch.save({'model_state_dict': final_model.state_dict(),'input_dim': input_dim_final}, model_path)
 
     # Log artifacts
     mlflow.log_artifact(preprocessor_path)
@@ -735,10 +825,10 @@ with mlflow.start_run(run_name=run_name) as run:
                                 "pytorch_model": model_path
                             })
 
-    # Apply model to test data to get predictions
-    model.eval()
+    ### APPLY MODEL TO TEST DATA #######################################################################################
+    final_model.eval()
     with torch.no_grad():
-        logits = model(X_test_dl)
+        logits = final_model(X_test_dl)
         y_proba = torch.sigmoid(logits).cpu().numpy()
         y_pred = (y_proba > 0.5).astype(int)
 

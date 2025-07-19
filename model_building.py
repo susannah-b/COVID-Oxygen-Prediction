@@ -1033,3 +1033,113 @@ print(store_final_id)
 #  Could also do an ensemble model approach for the final training, and stacking/voting
 
 # IMPROVE once final model is obtained, I'll likely want to plot more model-specific graphs
+
+
+def train_model(model, train_loader, val_loader):
+    for epoch in range(n_epochs):
+        # Training phase
+        model.train()
+        train_loss = 0
+        for batch in train_loader:
+            features = batch[0].to(device)
+            labels = batch[1].to(device)
+
+            outputs = model(features).squeeze()
+            loss = criterion(outputs, labels)
+
+            optimiser.zero_grad()
+            loss.backward()
+            optimiser.step()
+
+            train_loss += loss.item()
+
+        avg_train_loss = train_loss / len(train_loader)
+
+        if (epoch == 0) or ((epoch + 1) % nth_epoch == 0) or (epoch == n_epochs - 1):
+            print(f"Epoch {epoch + 1}, Loss: {avg_train_loss}")
+
+        if early_stopping:
+            # Validation phase
+            model.eval()
+            val_loss = 0
+            all_preds = []
+            all_labels = []
+
+            with torch.no_grad():
+                for batch in val_loader:
+                    features = batch[0].to(device)
+                    labels = batch[1].to(device)
+                    output = model(features).squeeze()
+                    loss = criterion(output, labels)
+                    val_loss += loss.item()
+
+                    # Collect predictions and labels for F1 calculation
+                    preds = torch.sigmoid(output) > 0.5
+                    all_preds.extend(preds.cpu().numpy())
+                    all_labels.extend(labels.cpu().numpy())  # Fixed: was features
+
+            val_loss = val_loss / len(val_loader)
+            fold_f1 = f1_score(all_labels, all_preds)
+
+            # Check early stopping condition
+            early_stopping.check_early_stop(val_loss)
+
+            if early_stopping.stop_training:
+                print(f"Early stopping at epoch {epoch}")
+                break
+
+    # Calculate final F1 score on validation set
+    model.eval()
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for batch in val_loader:
+            features = batch[0].to(device)
+            labels = batch[1].to(device)
+            output = model(features).squeeze()
+
+            preds = torch.sigmoid(output) > 0.5
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
+    return f1_score(all_labels, all_preds)
+
+
+# Corrected Cross-Validation
+kfold = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+f1_scores = []
+
+for fold, (train_idx, val_idx) in enumerate(kfold.split(X_train, y_train)):
+    print(f"Fold {fold + 1}")
+
+    # Create datasets for this fold
+    X_train_fold = X_train[train_idx]
+    y_train_fold = y_train[train_idx]
+    X_val_fold = X_train[val_idx]
+    y_val_fold = y_train[val_idx]
+
+    # Create data loaders for this fold
+    train_dataset = TensorDataset(torch.FloatTensor(X_train_fold), torch.FloatTensor(y_train_fold))
+    val_dataset = TensorDataset(torch.FloatTensor(X_val_fold), torch.FloatTensor(y_val_fold))
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+
+    # Initialize fresh model for this fold
+    model = O2Classifier(input_dim).to(device)
+    optimiser = torch.optim.Adam(model.parameters(), lr=5e-4)
+
+    # Reset early stopping for this fold
+    if early_stopping:
+        early_stopping.reset()  # Assuming your early stopping class has a reset method
+
+    # Train and get F1 score
+    f1 = train_model(model, train_loader, val_loader)
+    print(f"Fold {fold + 1} F1 Score: %.4f" % f1)
+    f1_scores.append(f1)
+
+# Evaluate the model
+mean = np.mean(f1_scores)
+std = np.std(f1_scores)
+print("Cross-Validation Results: %.2f%% (+/- %.2f%%)" % (mean * 100, std * 100))
