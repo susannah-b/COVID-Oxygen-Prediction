@@ -61,6 +61,7 @@ torch.manual_seed(42) # PyTorch CPU
 torch.cuda.manual_seed_all(42) # PyTorch GPU (if available)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
+np.random.seed(42)
 
 ### ARGPARSE TO SET RUN NAME ###########################################################################################
   # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
@@ -155,7 +156,7 @@ print(f"Total training samples: {len(X_train_full)} | Test samples: {len(X_test)
 print(f"Feature dimensions: {X_train_full.shape[1]} | Classes: {y_train.nunique()}")
 
 # Do test/validation split for the early stopping check (final model is trained on X_train_full)
-X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=validation_size, stratify=y_train_full)
+X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=validation_size, stratify=y_train_full, random_state=42)
 
 #TODO check that X_train is now correct elsewhere in code, post 2nd split (eg for graphs, anytihng that required len(X_train)? - is pca right?
 ### PCA ON ORIGINAL DATA ###############################################################################################
@@ -366,13 +367,15 @@ best_X_fs['TODO'] = 'NONE' #todo - set to an arbitrary FS method so hyperopt FS 
 class O2Classifier(nn.Module): # TODO decide/hyperopt layer #/activation function/# neurons/anything else
     def __init__(self, input_dim): # Initialisation - input number of numerical features
         super().__init__()
+        self.dropout = nn.Dropout(0.0) #todo hyperopt hp choice inc 0.0
         self.fc1 = nn.Linear(input_dim, 128)  # First fully connected (dense) layer with 128 neurons.
         self.relu = nn.ReLU()  # Activation function to add non-linearity.
         self.fc2 = nn.Linear(128, 1)  # Output layer outputting the probability of class 1
 
     def forward(self, input): # Forward pass
         # Pass through the network
-        x = self.fc1(input) # Passes the pooled embedding through the first dense layer.
+        x = self.dropout(input) # Dropout random neurons
+        x = self.fc1(x) # Passes the pooled embedding through the first dense layer.
         x = self.relu(x) # Applies the ReLU activation function
         output = self.fc2(x).squeeze(1) # Outputs the logits for the number of classes.
         return output
