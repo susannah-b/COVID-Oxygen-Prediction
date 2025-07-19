@@ -94,5 +94,7 @@ neural_network:
   n_epochs: 1000
   nth_epoch: 50
   learning_rate: 5e-4
+  early_stopping: False
+    # Whether to use early stopping during training. If True, will stop training if validation loss does not improve for a set number of epochs.
 
 

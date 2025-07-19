@@ -981,7 +981,7 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Print run id
     final_run_id = run.info.run_id
-    store_final_id = f"Run {run_name} for final traditional machine learning model completed. Run ID is {final_run_id}"
+    store_final_id = f"Run {run_name} for the final traditional machine learning model completed. Run ID is {final_run_id}"
 
     # Log artifacts
     mlflow.log_artifacts(graphs_dir, artifact_path="graphs")

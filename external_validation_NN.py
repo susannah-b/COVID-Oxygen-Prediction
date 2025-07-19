@@ -147,7 +147,7 @@ mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "1_0718-195906_Base_NN_no_early_stopping" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "2_0719-112153_NN_early_stopping_with_val_set" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 

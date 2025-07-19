@@ -15,6 +15,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text
 from sklearn.calibration import calibration_curve, CalibrationDisplay
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, brier_score_loss, roc_auc_score
 from sklearn.model_selection import cross_val_score, StratifiedKFold, learning_curve, LearningCurveDisplay
 from sklearn.linear_model import LogisticRegression, Lasso
@@ -109,6 +110,7 @@ batch_size = config['neural_network']['batch_size'] # Batch size to use for the 
 n_epochs = config['neural_network']['n_epochs'] # How many epochs to run
 nth_epoch = config['neural_network']['nth_epoch'] # Every nth epoch, print the loss
 learn_rate = float(config['neural_network']['learning_rate']) # Learning rate for NN #todo hypertune?
+early_stopping = config['neural_network']['early_stopping']
 
 ### READ IN DATA #######################################################################################################
 # Set pandas to display all columns and longer rows # IMPROVE remove in final version
@@ -136,8 +138,8 @@ os.makedirs(graphs_dir, exist_ok=True) # Make the ML graph that's specific to th
 # Train
 X_path = Path(__file__).parent / data_dir / "Surrey_X_train.csv"
 y_path = Path(__file__).parent / data_dir / "Surrey_y_train.csv"
-X_train = pd.read_csv(X_path, index_col=0)
-y_train = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
+X_train_full = pd.read_csv(X_path, index_col=0)
+y_train_full = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
 # Test
 X_path = Path(__file__).parent / data_dir / "Surrey_X_test.csv"
 y_path = Path(__file__).parent / data_dir / "Surrey_y_test.csv"
@@ -145,17 +147,23 @@ X_test = pd.read_csv(X_path, index_col=0)
 y_test = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
 
 # Convert y to float32 for pytorch
-y_train = y_train.astype(np.float32)
+y_train = y_train_full.astype(np.float32)
 y_test = y_test.astype(np.float32)
 
-print(f"Training samples: {len(X_train)} | Test samples: {len(X_test)}")
-print(f"Feature dimensions: {X_train.shape[1]} | Classes: {y_train.nunique()}")
+print(f"Total training samples: {len(X_train_full)} | Test samples: {len(X_test)}")
+print(f"Feature dimensions: {X_train_full.shape[1]} | Classes: {y_train.nunique()}")
 
+if early_stopping:
+    X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=0.15, stratify=y_train_full)
+else:
+    X_train = X_train_full
+
+#TODO check that X_train is now correct elsewhere in code, post 2nd split (eg for graphs, anytihng that required len(X_train)? - is pca right?
 ### PCA ON ORIGINAL DATA ###############################################################################################
 try:
     # Combine train and test
-    X_full = pd.concat([X_train, X_test]).values
-    y_full = np.concatenate([y_train, y_test])
+    X_full = pd.concat([X_train_full, X_test]).values
+    y_full = np.concatenate([y_train_full, y_test])
 
     # Standardize
     scaler = StandardScaler()
@@ -477,6 +485,38 @@ if not args.from_pipeline:
 ### HYPEROPT TUNING WITH MLFLOW ########################################################################################
 #todo adapt TML for NN
 
+### EARLY STOPPING #####################################################################################################
+
+# Basic setup for early stopping criteria
+patience = 5  # Epochs to wait after no improvement
+delta = 0.008  # Minimum change in the loss
+best_val_loss = float("inf")  # Best validation loss to compare against
+no_improvement_count = 0 # Count epochs since improvement
+
+class EarlyStopping:
+    def __init__(self, patience=5, delta=0, verbose=False):
+        self.patience = patience
+        self.delta = delta
+        self.verbose = verbose
+        self.best_loss = None
+        self.no_improvement_count = 0
+        self.stop_training = False
+
+    def check_early_stop(self, val_loss):
+        if self.best_loss is None or val_loss < self.best_loss - self.delta:
+            self.best_loss = val_loss
+            self.no_improvement_count = 0
+        else:
+            self.no_improvement_count += 1
+            if self.no_improvement_count >= self.patience:
+                self.stop_training = True
+                if self.verbose:
+                    print("Stopping early as no improvement has been observed.")
+
+# Initialize early stopping
+if early_stopping:
+    early_stopping = EarlyStopping(patience=patience, delta=delta, verbose=True)
+
 ### TRAIN FINAL MODEL ##################################################################################################
 #todo many parts were deleted from TML framework, so copy in later
 
@@ -519,38 +559,52 @@ with mlflow.start_run(run_name=run_name) as run:
     ])
 
     # Fit preprocessor
-    X_train_original = X_train.copy() # Stores original df
+    X_train_original = X_train.copy() # Stores original df (excluding X val)
     X_train_processed = preprocessor.fit_transform(X_train, y_train) # Converts to a numpy array on output
+    if early_stopping:
+        X_val_processed = preprocessor.fit_transform(X_val, y_val)
     X_test_processed = preprocessor.transform(X_test)
     input_dim = X_train_processed.shape[1]
 
     ### CREATE DATALOADERS #################################################################################################
     # Convert X data to PyTorch tensors
     X_train_dl = torch.tensor(X_train_processed, dtype=torch.float32)
+    if early_stopping:
+        X_val_dl = torch.tensor(X_val_processed, dtype=torch.float32)
     X_test_dl = torch.tensor(X_test_processed, dtype=torch.float32)
 
     # Convert labels and ensure proper shape (64-bit integer to 1D label tensor)
     y_train_dl = torch.tensor(y_train.values, dtype=torch.float32).squeeze()
+    if early_stopping:
+        y_val_dl = torch.tensor(y_val.values, dtype=torch.float32).squeeze()
     y_test_dl = torch.tensor(y_test.values, dtype=torch.float32).squeeze()
 
     # Create TensorDatasets
     train_dataset = TensorDataset(X_train_dl, y_train_dl)
+    if early_stopping:
+        val_dataset = TensorDataset(X_val_dl, y_val_dl)
+        val_sample_len = len(val_dataset)
+    else:
+        val_sample_len = 0
     test_dataset = TensorDataset(X_test_dl, y_test_dl)
 
     # Create DataLoaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    if early_stopping:
+        val_loader = DataLoader(val_dataset, batch_size=15, shuffle=False) #TODO custom batch size or hyperopt
 
-    print(f"Training samples: {len(train_dataset)} | Test samples: {len(test_dataset)}")
+    print(f"Training samples: {len(train_dataset)} | Validation samples: {val_sample_len} | Test samples: {len(test_dataset)}")
     print(f"Feature dimensions: {X_train.shape[1]} | Classes: {len(np.unique(y_train))}")
 
-    # Train the neural networks
+    # TRAIN NEURAL NETWORK #############################################################################################
     model = O2Classifier(input_dim).to(device)
     criterion = nn.BCEWithLogitsLoss()  # Binary Cross Entropy with built-in sigmoid
     optimiser = torch.optim.Adam(model.parameters(), lr=5e-4)  # Updates the model’s parameters to minimize the loss function
 
     for epoch in range(n_epochs):
+        # Training phase
         model.train()  # Sets the model to training mode, enabling operations like dropout (if present)
-        total_loss = 0
+        train_loss = 0
         for batch in train_loader:
             # Move the batch data to the same device as the model (GPU or CPU)
             features = batch[0].to(device)  # Selects input features
@@ -565,10 +619,32 @@ with mlflow.start_run(run_name=run_name) as run:
             loss.backward()  # Computes the gradients of the loss with respect to the model parameters via backpropagation
             optimiser.step()  # Updates the model parameters using the computed gradients
 
-            total_loss += loss.item()  # Accumulates the total loss for the epoch to monitor training progress
+            train_loss += loss.item()  # Accumulates the total loss for the epoch to monitor training progress
+        avg_train_loss = train_loss / len(train_loader)
 
         if (epoch == 0) or ((epoch + 1) % nth_epoch == 0) or (epoch == n_epochs - 1):  # Print every nth epoch or first/last epoch
-            print(f"Epoch {epoch + 1}, Loss: {total_loss / len(train_loader)}")  # Logs the average loss per epoch to track improvement
+            print(f"Epoch {epoch + 1}, Loss: {avg_train_loss}")  # Logs the average loss per epoch to track improvement
+
+        if early_stopping:
+            # Validation phase
+            model.eval()
+            val_loss = 0
+            with torch.no_grad():
+                for batch in val_loader:
+                    features = batch[0].to(device)
+                    labels = batch[1].to(device)
+                    output = model(features).squeeze()
+                    loss = criterion(output, labels)
+                    val_loss += loss.item()
+            avg_val_loss = val_loss / len(val_loader)
+
+            # Check early stopping condition
+            early_stopping.check_early_stop(val_loss)
+
+            if early_stopping.stop_training:
+                print(f"Early stopping at epoch {epoch}")
+                break
+
 
     # Save input features for validation - JSON (human-readable) and joblib
     with open(f"{output_data_dir}/input_features.json", "w") as f:
@@ -659,9 +735,7 @@ with mlflow.start_run(run_name=run_name) as run:
                                 "pytorch_model": model_path
                             })
 
-    # Apply model to test
-
-    # 3. Get predictions
+    # Apply model to test data to get predictions
     model.eval()
     with torch.no_grad():
         logits = model(X_test_dl)
@@ -673,6 +747,7 @@ with mlflow.start_run(run_name=run_name) as run:
     test_f1 = f1_score(y_test, y_pred)
     test_roc_auc = roc_auc_score(y_test, y_proba)
 
+    # Print metrics
     print(f"\nTest accuracy with best model: {test_accuracy:.4f}")
     mlflow.log_metric("test_accuracy", test_accuracy)
     print(f"Test F1 with best model: {test_f1:.4f}")
@@ -741,7 +816,7 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Print run id
     final_run_id = run.info.run_id
-    store_final_id = f"Run {run_name} for final neural network model completed. Run ID is {final_run_id}"
+    store_final_id = f"Run {run_name} for the neural network model completed. Run ID is {final_run_id}"
 
     # Log artifacts
     mlflow.log_artifacts(graphs_dir, artifact_path="graphs")
