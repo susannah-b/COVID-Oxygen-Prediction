@@ -24,7 +24,7 @@ from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier, Gradien
 from sklearn.metrics import roc_curve, auc, RocCurveDisplay, precision_recall_curve, average_precision_score, PrecisionRecallDisplay
 from sklearn.svm import SVC, LinearSVC
 from sklearn.preprocessing import StandardScaler
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.decomposition import PCA
 from xgboost import XGBClassifier, to_graphviz
 from xgboost import plot_tree as xgb_plot_tree
@@ -365,19 +365,21 @@ best_X_fs['TODO'] = 'NONE' #todo - set to an arbitrary FS method so hyperopt FS 
 #todo: need a basic train that will select [something, presumably a basic neural net] and corresponding feature selector. for now, using this predefined one.
 # todo so has to be selected in hyperopt, which might make this bit redundant
 class O2Classifier(nn.Module): # TODO decide/hyperopt layer #/activation function/# neurons/anything else
-    def __init__(self, input_dim): # Initialisation - input number of numerical features
+    def __init__(self, input_dim):
         super().__init__()
-        self.dropout = nn.Dropout(0.0) #todo hyperopt hp choice inc 0.0
-        self.fc1 = nn.Linear(input_dim, 128)  # First fully connected (dense) layer with 128 neurons.
-        self.relu = nn.ReLU()  # Activation function to add non-linearity.
-        self.fc2 = nn.Linear(128, 1)  # Output layer outputting the probability of class 1
+        self.dropout = nn.Dropout(0.7)
+        self.fc1 = nn.Linear(input_dim, 256) # Input layer
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 64)
+        self.fc4 = nn.Linear(64, 1)  # Output layer
+        self.relu = nn.Mish()
 
-    def forward(self, input): # Forward pass
-        # Pass through the network
-        x = self.dropout(input) # Dropout random neurons
-        x = self.fc1(x) # Passes the pooled embedding through the first dense layer.
-        x = self.relu(x) # Applies the ReLU activation function
-        output = self.fc2(x).squeeze(1) # Outputs the logits for the number of classes.
+    def forward(self, x):
+        x = self.dropout(x)
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))
+        output =  self.fc4(x).squeeze(1)
         return output
 
 ### OBJECTIVE FUNCTION FOR HYPEROPT PARAMETER TUNING ###################################################################
@@ -680,9 +682,10 @@ with mlflow.start_run(run_name=run_name) as run:
         X_val_fold = X_train.iloc[val_idx]
         y_val_fold = y_train.iloc[val_idx] if hasattr(y_train, 'iloc') else y_train[val_idx]
 
-        # Fit preprocessor on training fold only (prevent data leakage)
-        X_train_fold_processed = preprocessor.fit_transform(X_train_fold, y_train_fold)
-        X_val_fold_processed = preprocessor.transform(X_val_fold)  # Only transform, don't fit
+        # Clone preprocessor and fit
+        preprocessor_fold = clone(preprocessor)  # Create a fresh copy to avoid corrupting original preprocessor
+        X_train_fold_processed = preprocessor_fold.fit_transform(X_train_fold, y_train_fold)
+        X_val_fold_processed = preprocessor_fold.transform(X_val_fold)
 
         # Create data loaders for this fold
         train_dataset_fold = TensorDataset(

@@ -147,7 +147,7 @@ mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "7_0719-213333_cross_validation_ES" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "46_0720-234258_cross_validation_ES" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
@@ -157,22 +157,23 @@ model_path = f"{model_output}/artifacts/best_model"
 model = mlflow.pyfunc.load_model(model_path)
 
 # Load input features
-features_path = f"{model_output}/training_data/ML/input_features.joblib"
+features_path = f"{model_output}/training_data/NN/input_features.joblib"
 input_features = joblib.load(features_path)
 
 # Load selected features
-features_path_2 = f"{model_output}/training_data/ML/selected_features.joblib"
+features_path_2 = f"{model_output}/training_data/NN/selected_features.joblib"
 selected_features = joblib.load(features_path_2)
 
 # Set MLflow logging details
 mlflow.set_experiment("Oxygen Prediction - Validation")
 
 ### PREPARE DATA #######################################################################################################
+print(len(input_features))
+print(len(X_data.columns))
 # Filter validation data to the original features
 X_data = X_data[input_features]
 # Ensure same column order
 X_data = X_data.reindex(columns=input_features)
-
 ### FIT MODEL ##########################################################################################################
 mlflow.pytorch.autolog()
 
