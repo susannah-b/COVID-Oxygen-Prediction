@@ -5,7 +5,7 @@ from sklearn.inspection import permutation_importance
 from sklearn.pipeline import Pipeline
 from sklearn.tree import plot_tree, export_text
 from sklearn.calibration import calibration_curve, CalibrationDisplay
-from sklearn.metrics import accuracy_score, f1_score, brier_score_loss
+from sklearn.metrics import accuracy_score, f1_score, brier_score_loss, roc_auc_score
 from sklearn.model_selection import cross_val_score, StratifiedKFold, learning_curve, LearningCurveDisplay
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.metrics import roc_curve, auc, RocCurveDisplay, precision_recall_curve, average_precision_score, PrecisionRecallDisplay
@@ -489,19 +489,20 @@ def basic_train(model, X_train, y_train, identifier, scores_dict, feature_select
             ('classifier', model)
         ])
         try:
-            # 10-fold cross validation for F1 score and accuracy
-            f1_val = cross_val_score(pipe, X_train, y_train, scoring='f1', cv=StratifiedKFold(10, shuffle=True, random_state=42))
+            # 10-fold cross validation for AUROC score and accuracy
+            roc_val = cross_val_score(pipe, X_train, y_train, scoring='roc_auc', cv=StratifiedKFold(10, shuffle=True, random_state=42))
             accuracy_val = cross_val_score(pipe, X_train, y_train, scoring='accuracy', cv=StratifiedKFold(10, shuffle=True, random_state=42))
 
             # Fit the pipeline on the training data
             pipe.fit(X_train, y_train)
             y_pred = pipe.predict(X_train)
+            y_proba = pipe.predict_proba(X_train)[:, 1]
             # Metrics calculation
-            f1_train = f1_score(y_train, y_pred)
+            roc_train = roc_auc_score(y_train, y_proba)
             accuracy_train = accuracy_score(y_train, y_pred)
 
             # List results for each feature selection method
-            model_results[fs_name] = [identifier, fs_name, accuracy_train, accuracy_val.mean(), f1_train, f1_val.mean(), ]
+            model_results[fs_name] = [identifier, fs_name, accuracy_train, accuracy_val.mean(), roc_train, roc_val.mean(), ]
             print(f"Training of {identifier} using {fs_name} complete.")
         except Exception as e:
             print(f"Error training {identifier} with {fs_name}: {str(e)}")
@@ -510,8 +511,8 @@ def basic_train(model, X_train, y_train, identifier, scores_dict, feature_select
     # Print results from best feature selection methods
     model_results_df = pd.DataFrame.from_dict(model_results,
                            orient='index',
-                           columns=['Model', 'Selector', 'Train Accuracy', 'CV Accuracy', 'Train F1',
-                                    'Test F1']).sort_values(by=['Test F1'], ascending=False)
+                           columns=['Model', 'Selector', 'Train Accuracy', 'CV Accuracy', 'Train AUROC',
+                                    'Test AUROC']).sort_values(by=['Test AUROC'], ascending=False)
     print(f"Metrics from {identifier} experimentation:")
     print(model_results_df, "\n")
 
@@ -531,7 +532,7 @@ def plot_fs_performance(all_results_sorted, graphs_dir):
     plt.figure(figsize=(12, 8))
     sns.lineplot(data=all_results_sorted,
                  x='Model',
-                 y='Test F1',
+                 y='Test AUROC',
                  hue='Selector',
                  style='Selector',
                  markers=True,
@@ -541,7 +542,7 @@ def plot_fs_performance(all_results_sorted, graphs_dir):
 
     plt.title('Feature Selector Performance Across Models', fontsize=16)
     plt.xlabel('Model', fontsize=14)
-    plt.ylabel('Test F1 Score', fontsize=14)
+    plt.ylabel('Test AUROC Score', fontsize=14)
     plt.xticks(rotation=15)
     plt.legend(title='Feature Selectors', title_fontsize=12, fontsize=10)
     plt.grid(alpha=0.2)
@@ -656,7 +657,7 @@ def plot_learning_curve(final_pipeline, X_train, y_train, graphs_dir):
         train_scores=train_scores,
         test_scores=val_scores
     ).plot(ax=ax)
-    ax.set_ylabel("F1 Score")
+    ax.set_ylabel("Accuracy Score") # WARNING had this as F1 - might in fact be accuracy
     ax.set_title("Learning Curve")
 
     # Save the plot
@@ -794,7 +795,7 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
                 y_test,
                 n_repeats=30,
                 random_state=42,
-                scoring='f1',
+                scoring='roc_auc',
             )
 
             # Create DataFrame for plotting
@@ -1111,105 +1112,6 @@ def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):
     plt.close()
 
 ### NEURAL NETWORKS ####################################################################################################
-# Basic model training function to get some initial scores and decide which model to proceed with
-def basic_train_NN(model, X_train, y_train, identifier, scores_dict, feature_selectors, feature_selection, threshold):
-    # Iterate over feature selectors
-    model_results = {}
-    overall_summary = []
-    for fs_name, selector_config in feature_selectors.items():
-        # Build selector from configuration
-        if fs_name == 'NONE':
-            selector = 'passthrough'
-        else:
-            # Instantiate selector with base parameters
-            selector = selector_config['class'](**selector_config['base_params'])
-
-        # Create a pipeline with a) the required preprocessing steps and b) the FS and model. This is then applied to each CV fold to avoid data leakage vs applying to all of X_train
-        pipe = Pipeline([
-            ('preprocessor', Pipeline([
-                ('int_to_float', IntToFloatTransformer()),
-                ('var_thresh', VarianceThreshold(threshold=threshold)),
-                ('scaler', StandardScaler())
-            ])),
-            ('feature_selector', selector if feature_selection else 'passthrough'),
-            ('classifier', model)
-        ])
-        try:
-            # 10-fold cross validation for F1 score and accuracy
-            f1_val = cross_val_score(pipe, X_train, y_train, scoring='f1', cv=StratifiedKFold(10, shuffle=True, random_state=42))
-            accuracy_val = cross_val_score(pipe, X_train, y_train, scoring='accuracy', cv=StratifiedKFold(10, shuffle=True, random_state=42))
-
-            # Fit the pipeline on the training data
-            pipe.fit(X_train, y_train)
-            y_pred = pipe.predict(X_train)
-            # Metrics calculation
-            f1_train = f1_score(y_train, y_pred)
-            accuracy_train = accuracy_score(y_train, y_pred)
-
-            # List results for each feature selection method
-            model_results[fs_name] = [identifier, fs_name, accuracy_train, accuracy_val.mean(), f1_train, f1_val.mean(), ]
-            print(f"Training of {identifier} using {fs_name} complete.")
-        except Exception as e:
-            print(f"Error training {identifier} with {fs_name}: {str(e)}")
-            model_results[identifier] = [identifier, None, None, None, None, None]
-
-    # Print results from best feature selection methods
-    model_results_df = pd.DataFrame.from_dict(model_results,
-                           orient='index',
-                           columns=['Model', 'Selector', 'Train Accuracy', 'CV Accuracy', 'Train F1',
-                                    'Test F1']).sort_values(by=['Test F1'], ascending=False)
-    print(f"Metrics from {identifier} experimentation:")
-    print(model_results_df, "\n")
-
-    # Take the top result unless empty
-    if model_results_df.empty:
-        scores_dict[identifier] = [identifier, None, None, None, None, None]
-        print(f"All feature selection methods failed for {identifier}.")
-    else:
-        scores_dict[identifier] = model_results_df.iloc[0].to_list()
-    print(f"Finished training {identifier}")
-
-    # Return the overall results list for the model
-    return model_results_df
-
-# Plot the performance of feature selectors per model
-def plot_fs_performance(all_results_sorted, graphs_dir):
-    plt.figure(figsize=(12, 8))
-    sns.lineplot(data=all_results_sorted,
-                 x='Model',
-                 y='Test F1',
-                 hue='Selector',
-                 style='Selector',
-                 markers=True,
-                 dashes=False,
-                 markersize=10,
-                 linewidth=2.5)
-
-    plt.title('Feature Selector Performance Across Models', fontsize=16)
-    plt.xlabel('Model', fontsize=14)
-    plt.ylabel('Test F1 Score', fontsize=14)
-    plt.xticks(rotation=15)
-    plt.legend(title='Feature Selectors', title_fontsize=12, fontsize=10)
-    plt.grid(alpha=0.2)
-    plt.tight_layout()
-    plt.savefig(f"{graphs_dir}/selector_performance.png", bbox_inches='tight')
-
-# Convert integers to floats
-class IntToFloatTransformer(BaseEstimator, TransformerMixin):
-    def fit(self, X, y=None):
-        return self
-
-    def transform(self, X):
-        # Only convert if DataFrame (preserves column names)
-        if isinstance(X, pd.DataFrame):
-            int_cols = X.select_dtypes(include=['int', 'int32', 'int64']).columns
-            X[int_cols] = X[int_cols].astype(float)
-        return X
-
-# Check if port is in use for MLFlow
-def port_in_use(host: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex((host, port)) == 0
 
 
 

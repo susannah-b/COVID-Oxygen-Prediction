@@ -14,7 +14,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text
 from sklearn.calibration import calibration_curve, CalibrationDisplay
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, brier_score_loss
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, brier_score_loss, roc_auc_score
 from sklearn.model_selection import cross_val_score, StratifiedKFold, learning_curve, LearningCurveDisplay
 from sklearn.linear_model import LogisticRegression, Lasso
 from sklearn.feature_selection import SelectFromModel, SequentialFeatureSelector, f_classif, SelectKBest, RFECV, VarianceThreshold
@@ -246,7 +246,7 @@ feature_selectors_all = {
             'estimator': LogisticRegression(),
             'step': 1,
             'cv': StratifiedKFold(5),
-            'scoring': "f1",
+            'scoring': "roc_auc",
             'min_features_to_select': 50,
         }
     },
@@ -257,7 +257,7 @@ feature_selectors_all = {
             'estimator': SVC(kernel='linear'),
             'step': 1,
             'cv': StratifiedKFold(5),
-            'scoring': "f1",
+            'scoring': "roc_auc",
             'min_features_to_select': 50,
         }
     },
@@ -268,7 +268,7 @@ feature_selectors_all = {
             'estimator': RandomForestClassifier(random_state=42),
             'step': 1,
             'cv': StratifiedKFold(5),
-            'scoring': "f1",
+            'scoring': "roc_auc",
             'min_features_to_select': 50,
         }
     },
@@ -280,7 +280,7 @@ feature_selectors_all = {
                                        eval_metric='logloss', random_state=42),
             'step': 1,
             'cv': StratifiedKFold(5),
-            'scoring': "f1",
+            'scoring': "roc_auc",
             'min_features_to_select': 50,
         }
     },
@@ -384,7 +384,7 @@ if basic_training:
 
     # SVM
     if SVM:
-        svc_clf = SVC()
+        svc_clf = SVC(probability=True)
         svm_results = basic_train(svc_clf, X_train, y_train, 'Support Vector Classifier', top_model_scores, feature_selectors, feature_selection, threshold)
         basic_results.append(svm_results)
 
@@ -422,8 +422,8 @@ if basic_training:
     # Make dataframe of model scores and print results
     scores = pd.DataFrame.from_dict(top_model_scores,
                                     orient='index',
-                                    columns=['Model', 'Selector', 'Train Accuracy', 'CV Accuracy', 'Train F1',
-                                             'Test F1']).reset_index(drop=True).sort_values(by='Test F1', ascending=False)
+                                    columns=['Model', 'Selector', 'Train Accuracy', 'CV Accuracy', 'Train AUROC',
+                                             'Test AUROC']).reset_index(drop=True).sort_values(by='Test AUROC', ascending=False)
     # Print the top results for each model
     print("\nBest results per model:")
     print(scores.head(len(scores)))
@@ -453,7 +453,7 @@ else:
 # For selected models, define a parameter params['type'] for the model name. Then evaluate parameters and calculate the cross-validated accuracy.
 
 # Dictionary to store the best model accuracies
-best_f1 = {
+best_roc = {
     'svm': 0.0,
     'rf': 0.0,
     'logreg': 0.0,
@@ -557,15 +557,15 @@ def objective(params):
         ])
 
         # Use 5-fold cross validation to compute the mean accuracy
-        f1_score_mean = cross_val_score(pipe, X_train, y_train, cv=StratifiedKFold(5, shuffle=True, random_state=42), scoring='f1').mean()  # Reduced to 5-fold for speed
+        roc_score_mean = cross_val_score(pipe, X_train, y_train, cv=StratifiedKFold(5, shuffle=True, random_state=42), scoring='roc_auc').mean()  # Reduced to 5-fold for speed
 
         # Log the best accuracy for each model type if improved
-        if f1_score_mean > best_f1[classifier_type]:
-            best_f1[classifier_type] = f1_score_mean
-            mlflow.log_metric(f"best_{classifier_type}_F1", f1_score_mean)
+        if roc_score_mean > best_roc[classifier_type]:
+            best_roc[classifier_type] = roc_score_mean
+            mlflow.log_metric(f"best_{classifier_type}_AUROC", roc_score_mean)
 
     # Because fmin() tries to minimize the objective, this function must return the negative accuracy.
-    return {'loss': -f1_score_mean, 'status': STATUS_OK}
+    return {'loss': -roc_score_mean, 'status': STATUS_OK}
 
 ### DEFINE SEARCH SPACES PER FEATURE SELECTOR ########################################################################## # TODO - go over documentation and check which options to include for each parameter, and decide whether to go in base params or the search space - AI-gened for now
 selector_param_spaces = { # Note: for new data, values may need to be tweaked as in feature selection parameter tuning, some fits can fail and crash the script
@@ -670,7 +670,7 @@ if type_translation['logreg'] in best_models_fs:
        'class_weight': hp.choice('lr_class_weight', [None, 'balanced']),
        'random_state': 42,
        'max_iter': 3000,
-       'fs_params': selector_param_spaces[best_models_fs[type_translation['log_reg']]]
+       'fs_params': selector_param_spaces[best_models_fs[type_translation['logreg']]]
    })
 # XGBoost
 if type_translation['xgb'] in best_models_fs:
@@ -785,9 +785,9 @@ with mlflow.start_run(run_name=hyperopt_name) as run:
     store_hyp_id = f"Run {run_name} for hyperparameter training completed. Run ID is {hyper_run_id}. See nested runs for individual trials"
 
 # Print the best accuracies for each model type
-print("\nHighest model F1 on train data:")
-best_f1_df = pd.DataFrame(list(best_f1.items()), columns=['Models', 'Highest F1'])
-print(best_f1_df)
+print("\nHighest model AUROC on train data:")
+best_roc_df = pd.DataFrame(list(best_roc.items()), columns=['Models', 'Highest AUROC'])
+print(best_roc_df)
 
 # Extract and print the best hyperparameter configuration
 best_config = space_eval(search_space, best_result)
@@ -930,8 +930,10 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Evaluate the final model on the test set
     y_pred = final_pipeline.predict(X_test)
+    y_proba = final_pipeline.predict_proba(X_test)[:, 1]
     test_accuracy = accuracy_score(y_test, y_pred)
     test_f1 = f1_score(y_test, y_pred)
+    test_roc = roc_auc_score(y_test, y_proba)
 
     # Print confusion matrix
     cm = confusion_matrix(y_test, y_pred)
@@ -942,6 +944,7 @@ with mlflow.start_run(run_name=run_name) as run:
 
     print(f"\nTest accuracy with best model ({classifier_type}): {test_accuracy:.4f}")
     print(f"Test F1 score with best model ({classifier_type}): {test_f1:.4f}")
+    print(f"Test AUROC score with best model ({classifier_type}): {test_roc:.4f}")
 
     # Save predictions to csv
     model_results = pd.DataFrame({'Real values': y_test,'ML predictions': y_pred}, index=X_test.index)
@@ -949,6 +952,7 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Log some key metrics #IMPROVE - do more?
     mlflow.log_metric("test_accuracy", test_accuracy)
+    mlflow.log_metric("test_roc", test_roc)
     mlflow.log_metric("test_f1", test_f1)
 
 ### GRAPHS #############################################################################################################
