@@ -58,6 +58,9 @@ warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 # Bool to show additional detail
 show_detail = False
 
+# Random seed
+np.random.seed(42)
+
 ### ARGPARSE TO SET RUN NAME ###########################################################################################
   # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
 parser = argparse.ArgumentParser()
@@ -553,7 +556,7 @@ def objective(params):
             ('classifier', clf)
         ])
 
-        # Use 10-fold cross validation to compute the mean accuracy
+        # Use 5-fold cross validation to compute the mean accuracy
         f1_score_mean = cross_val_score(pipe, X_train, y_train, cv=StratifiedKFold(5, shuffle=True, random_state=42), scoring='f1').mean()  # Reduced to 5-fold for speed
 
         # Log the best accuracy for each model type if improved
@@ -640,7 +643,8 @@ if type_translation['svm'] in best_models_fs:
         'gamma': hp.choice('svm_gamma', ['scale', 'auto']),
         'class_weight': hp.choice('svm_class_weight', [None, 'balanced']),
         'random_state': 42,
-        'probability' : True
+        'probability' : True,
+        'fs_params': selector_param_spaces[best_models_fs[type_translation['svm']]]
     })
 # Random forest
 if type_translation['rf'] in best_models_fs:
@@ -654,7 +658,7 @@ if type_translation['rf'] in best_models_fs:
         'max_features': hp.choice('rf_max_features', ['sqrt', 'log2', 0.8]),
         'class_weight': hp.choice('rf_class_weight', [None, 'balanced']),
         'random_state': 42,
-        'fs_params': selector_param_spaces[best_models_fs[type_translation['rf']]] # The FS shorthand name, e.g. SFM_RF
+        'fs_params': selector_param_spaces[best_models_fs[type_translation['rf']]] # The FS shorthand name, e.g. SFM_RF # WARNING - reviewing code and not sure if only rf models are having fs_params tuned explored? why do the search spaces not ahve this
     })
 # Logistic regression
 if type_translation['logreg'] in best_models_fs:
@@ -665,7 +669,8 @@ if type_translation['logreg'] in best_models_fs:
        'penalty': hp.choice('lr_penalty', ['l1', 'l2']), # Chosen to be compatible with liblinear and saga
        'class_weight': hp.choice('lr_class_weight', [None, 'balanced']),
        'random_state': 42,
-       'max_iter': 3000
+       'max_iter': 3000,
+       'fs_params': selector_param_spaces[best_models_fs[type_translation['log_reg']]]
    })
 # XGBoost
 if type_translation['xgb'] in best_models_fs:
@@ -683,6 +688,7 @@ if type_translation['xgb'] in best_models_fs:
         'scale_pos_weight': hp.uniform('xgb_scale_pos_weight', 1, 10),  # Adjust if classes are imbalanced
         'max_delta_step': hp.uniform('xgb_max_delta_step', 0, 10),
         'random_state': 42,
+        'fs_params': selector_param_spaces[best_models_fs[type_translation['xgb']]]
     })
 # Gradient Boosting
 if type_translation['gb'] in best_models_fs:
@@ -698,6 +704,7 @@ if type_translation['gb'] in best_models_fs:
         'loss': hp.choice('gb_loss', ['log_loss', 'exponential']),
         'criterion': hp.choice('gb_criterion', ['friedman_mse', 'squared_error']),
         'random_state': 42,
+        'fs_params': selector_param_spaces[best_models_fs[type_translation['gb']]]
     })
 # AdaBoost
 if type_translation['ada'] in best_models_fs:
@@ -711,6 +718,7 @@ if type_translation['ada'] in best_models_fs:
             LogisticRegression(random_state=42),
         ]),
         'random_state': 42,
+        'fs_params': selector_param_spaces[best_models_fs[type_translation['ada']]]
     })
 # K-Nearest Neighbors
 if type_translation['knn'] in best_models_fs:
@@ -721,6 +729,7 @@ if type_translation['knn'] in best_models_fs:
         'leaf_size': hp.uniform('knn_leaf_size', 10, 60),
         'p': hp.choice('knn_p', [1, 2]),
         'metric': hp.choice('knn_metric', ['minkowski', 'euclidean', 'cityblock']),
+        'fs_params': selector_param_spaces[best_models_fs[type_translation['knn']]]
     })
 
 
@@ -759,7 +768,7 @@ if not args.from_pipeline:
      # WARNING: Run name is not automatically imported to external_validation.py if running standalone to allow specific runs to be used. Set manually.
 
 ### HYPEROPT TUNING WITH MLFLOW ########################################################################################
-print("\nNow tuning hyperparameters\n")
+print("\nNow tuning hyperparameters...\n")
 
 mlflow.set_experiment("Oxygen Prediction - Hyperparams") # Note: Could use same experiment ID as the final model in order to compare; for now I find it easier to keep them separate.
 with mlflow.start_run(run_name=hyperopt_name) as run:
@@ -776,7 +785,7 @@ with mlflow.start_run(run_name=hyperopt_name) as run:
     store_hyp_id = f"Run {run_name} for hyperparameter training completed. Run ID is {hyper_run_id}. See nested runs for individual trials"
 
 # Print the best accuracies for each model type
-print("\nHighest model accuracies on train data:")
+print("\nHighest model F1 on train data:")
 best_f1_df = pd.DataFrame(list(best_f1.items()), columns=['Models', 'Highest F1'])
 print(best_f1_df)
 
@@ -802,6 +811,7 @@ with mlflow.start_run(run_name=run_name) as run:
     mlflow.set_tag("Hyperopt MLflow run", hyperopt_name)
     mlflow.log_param("mlflow_run_name", run.info.run_name)
     final_exp_id = run.info.experiment_id # Get experiment id for folder management
+
     # Extract the best classifier type
     classifier_type = best_config['type']
 
@@ -1033,113 +1043,3 @@ print(store_final_id)
 #  Could also do an ensemble model approach for the final training, and stacking/voting
 
 # IMPROVE once final model is obtained, I'll likely want to plot more model-specific graphs
-
-
-def train_model(model, train_loader, val_loader):
-    for epoch in range(n_epochs):
-        # Training phase
-        model.train()
-        train_loss = 0
-        for batch in train_loader:
-            features = batch[0].to(device)
-            labels = batch[1].to(device)
-
-            outputs = model(features).squeeze()
-            loss = criterion(outputs, labels)
-
-            optimiser.zero_grad()
-            loss.backward()
-            optimiser.step()
-
-            train_loss += loss.item()
-
-        avg_train_loss = train_loss / len(train_loader)
-
-        if (epoch == 0) or ((epoch + 1) % nth_epoch == 0) or (epoch == n_epochs - 1):
-            print(f"Epoch {epoch + 1}, Loss: {avg_train_loss}")
-
-        if early_stopping:
-            # Validation phase
-            model.eval()
-            val_loss = 0
-            all_preds = []
-            all_labels = []
-
-            with torch.no_grad():
-                for batch in val_loader:
-                    features = batch[0].to(device)
-                    labels = batch[1].to(device)
-                    output = model(features).squeeze()
-                    loss = criterion(output, labels)
-                    val_loss += loss.item()
-
-                    # Collect predictions and labels for F1 calculation
-                    preds = torch.sigmoid(output) > 0.5
-                    all_preds.extend(preds.cpu().numpy())
-                    all_labels.extend(labels.cpu().numpy())  # Fixed: was features
-
-            val_loss = val_loss / len(val_loader)
-            fold_f1 = f1_score(all_labels, all_preds)
-
-            # Check early stopping condition
-            early_stopping.check_early_stop(val_loss)
-
-            if early_stopping.stop_training:
-                print(f"Early stopping at epoch {epoch}")
-                break
-
-    # Calculate final F1 score on validation set
-    model.eval()
-    all_preds = []
-    all_labels = []
-
-    with torch.no_grad():
-        for batch in val_loader:
-            features = batch[0].to(device)
-            labels = batch[1].to(device)
-            output = model(features).squeeze()
-
-            preds = torch.sigmoid(output) > 0.5
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-
-    return f1_score(all_labels, all_preds)
-
-
-# Corrected Cross-Validation
-kfold = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-f1_scores = []
-
-for fold, (train_idx, val_idx) in enumerate(kfold.split(X_train, y_train)):
-    print(f"Fold {fold + 1}")
-
-    # Create datasets for this fold
-    X_train_fold = X_train[train_idx]
-    y_train_fold = y_train[train_idx]
-    X_val_fold = X_train[val_idx]
-    y_val_fold = y_train[val_idx]
-
-    # Create data loaders for this fold
-    train_dataset = TensorDataset(torch.FloatTensor(X_train_fold), torch.FloatTensor(y_train_fold))
-    val_dataset = TensorDataset(torch.FloatTensor(X_val_fold), torch.FloatTensor(y_val_fold))
-
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
-    # Initialize fresh model for this fold
-    model = O2Classifier(input_dim).to(device)
-    optimiser = torch.optim.Adam(model.parameters(), lr=5e-4)
-
-    # Reset early stopping for this fold
-    if early_stopping:
-        early_stopping.reset()  # Assuming your early stopping class has a reset method
-
-    # Train and get F1 score
-    f1 = train_model(model, train_loader, val_loader)
-    print(f"Fold {fold + 1} F1 Score: %.4f" % f1)
-    f1_scores.append(f1)
-
-# Evaluate the model
-mean = np.mean(f1_scores)
-std = np.std(f1_scores)
-print("Cross-Validation Results: %.2f%% (+/- %.2f%%)" % (mean * 100, std * 100))
