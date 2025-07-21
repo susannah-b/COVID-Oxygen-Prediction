@@ -497,6 +497,8 @@ def objective(params):
             # Note: same conversion is done for different selector types
         if 'min_features_to_select' in all_params:
             all_params['min_features_to_select'] = int(all_params['min_features_to_select'])
+        if 'n_features_to_select' in all_params:
+            all_params['n_features_to_select'] = int(all_params['n_features_to_select'])
 
         # Update params
         selector = selector_config['class'](**all_params)
@@ -820,6 +822,8 @@ with mlflow.start_run(run_name=run_name) as run:
     # Convert to integers where needed
     if 'min_features_to_select' in fs_params:
         fs_params['min_features_to_select'] = int(fs_params['min_features_to_select'])
+    if 'n_features_to_select' in fs_params:
+        fs_params['n_features_to_select'] = int(fs_params['n_features_to_select'])
     # Assign best parameters for the model
     best_params = {k: v for k, v in best_config.items() if k not in ['type', 'fs_params']}
 
