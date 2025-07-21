@@ -10,7 +10,7 @@ import subprocess
 import time
 import mlflow
 import joblib
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, roc_auc_score
 import shutil
 import argparse
 import yaml
@@ -52,6 +52,8 @@ with open(config_path, "r") as f:
 host = config['general']['host']
 port = config['general']['port']
 track_final = config['model_building']['track_final']
+
+np.random.seed(42)
 
 ### LOAD ISARIC DATA ###################################################################################################
 # Set input directories
@@ -96,7 +98,7 @@ mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "9_0716-170330_Testing_50_evals" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "73_0721-213241_fs" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
@@ -144,10 +146,12 @@ with mlflow.start_run(run_name=val_run_name) as run:
 
     # Predict on external data
     predictions = model.predict(X_data)
+    y_proba = model.predict_proba(X_data)[:, 1]
 
     # Get prediction metrics
     test_accuracy = accuracy_score(y_data, predictions)
     test_f1 = f1_score(y_data, predictions)
+    test_roc = roc_auc_score(y_data, y_proba)
 
     # Print confusion matrix
     cm = confusion_matrix(y_data, predictions)
@@ -158,6 +162,8 @@ with mlflow.start_run(run_name=val_run_name) as run:
 
     print(f"\nValidation accuracy: {test_accuracy:.4f}")
     print(f"Validation F1 score: {test_f1:.4f}")
+    print(f"Validation AUROC score: {test_roc:.4f}")
+
 
     # Save predictions to csv
     model_results = pd.DataFrame({'Real values': y_data.values, 'ML predictions': predictions}, index=X_data.index)

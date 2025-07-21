@@ -28,16 +28,16 @@ from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.decomposition import PCA
 from xgboost import XGBClassifier, to_graphviz
 from xgboost import plot_tree as xgb_plot_tree
-from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
+from hyperopt import fmin, tpe, hp, STATUS_OK, STATUS_FAIL, Trials, space_eval
 import mlflow
 import yaml
 import mlflow.sklearn
 from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
 import warnings
-from functions import basic_train, port_in_use, pca_original, plot_learning_curve, \
+from functions import port_in_use, pca_original, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
-    plot_pca_predicted, plot_confusion_matrix, plot_fs_performance
+    plot_pca_predicted, plot_confusion_matrix
 import re
 import os
 from datetime import datetime
@@ -49,13 +49,12 @@ import joblib
 import argparse
 from sklearn.metrics import confusion_matrix, classification_report
 from sklearn.base import clone
+# todo clean up at end
 
 # Bool to show additional detail
 show_detail = False
 
 ### SET RANDOM SEEDS ###################################################################################################
-# todo do for other scripts
-
 # Set global random seeds
 torch.manual_seed(42) # PyTorch CPU
 torch.cuda.manual_seed_all(42) # PyTorch GPU (if available)
@@ -96,22 +95,17 @@ with open(config_path, "r") as f:
 validate = config['general']['validate'] # Whether to make the Surrey dataset validation compatible
 var_threshold = config['model_building']['var_threshold'] # Threshold for variance filtering
 feature_selection = config['model_building']['feature_selection'] # Whether to do feature selection at all stages
-basic_training = config['model_building']['basic_training'] # Whether to run basic_training (vs load in specific model type/feature selector)
-n_models_to_tune = config['model_building']['n_models_to_tune'] # How many model types to take to the hyperparamter tuning stage
 host = config['general']['host'] # Host for tracking server
 port = config['general']['port'] # Port for local tracking server
-# model_choice = config['model_building']['specify_model']['model_type'] # Model type if not basic training # TODO update with best once determined
-fs_choice = config['model_building']['specify_model']['fs'] #Feature selector if not basic training # TODO update with best once determined
+selector_type = config['neural_network']['feature_selection']['selector'] # Feature selector used
 max_evals = config['model_building']['max_evals'] # How many evaluations to do in hyperopt tuning
 track_final = config['model_building']['track_final'] # Whether to copy the model_output to the designated folder for easier browsing
-
-#todo NN specific ones below - keep all these
 batch_size = config['neural_network']['batch_size'] # Batch size to use for the neural net
-n_epochs = config['neural_network']['n_epochs'] # How many epochs to run
+n_epochs = config['neural_network']['n_epochs'] # How many epochs to run # TODO this is now irrelevant with hyperopt - although could skip epoch tuning if set
 nth_epoch = config['neural_network']['nth_epoch'] # Every nth epoch, print the loss
 learn_rate = float(config['neural_network']['learning_rate']) # Learning rate for NN #todo hypertune?
-early_stopping = config['neural_network']['early_stopping']
-validation_size = config['neural_network']['validation_size']
+early_stopping = config['neural_network']['early_stopping'] # Whether to implement early stopping
+validation_size = config['neural_network']['validation_size'] # Proportional size of the validation set for cross validation/early stopping
 
 ### READ IN DATA #######################################################################################################
 # Set pandas to display all columns and longer rows # IMPROVE remove in final version
@@ -158,6 +152,9 @@ print(f"Feature dimensions: {X_train_full.shape[1]} | Classes: {y_train.nunique(
 # Do test/validation split for the early stopping check (final model is trained on X_train_full)
 X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=validation_size, stratify=y_train_full, random_state=42)
 
+# Set device
+device = "cuda" if torch.cuda.is_available() else "cpu" # Automatically uses a GPU if available; otherwise, defaults to the CPU
+
 #TODO check that X_train is now correct elsewhere in code, post 2nd split (eg for graphs, anytihng that required len(X_train)? - is pca right?
 ### PCA ON ORIGINAL DATA ###############################################################################################
 try:
@@ -200,14 +197,12 @@ except Exception as e:
 
 ### VARIANCE THRESHOLDING ##############################################################################################
   # Applied in the scikit-learn pipeline
- # IMPROVE see model_building.py for note on variance thresholding
+
 # Calculate median variance of all features
 variances = X_train.var(axis=0)
 threshold = float(var_threshold) # Effectively zero but avoids floating-point issues
 
 # Note: Skipped VIF analysis for NN
-
-# WARNING Create dataloaders removed from here (see old commit) - convert to float, ensure 1D for y_train
 
 ### CONVERT INTEGER COLUMNS TO FLOAT ###################################################################################
   # Safely handles missing values
@@ -219,16 +214,16 @@ class IntToFloatTransformer(BaseEstimator, TransformerMixin):
         # Only convert if DataFrame (preserves column names)
         if isinstance(X, pd.DataFrame):
             int_cols = X.select_dtypes(include=['int', 'int32', 'int64']).columns
-            X[int_cols] = X[int_cols].astype(float)
+            X.loc[:, int_cols] = X.loc[:, int_cols].astype(float)
             # Convert to float32 from pandas float64 for pytorch
             float64_cols = X.select_dtypes(include=['float64']).columns
-            X[float64_cols] = X[float64_cols].astype(np.float32)
+            X.loc[:, float64_cols] = X.loc[:, float64_cols].astype(np.float32)
         return X
 
 ### DEFINE FEATURE SELECTION PER MODEL #################################################################################
 ### Feature selection methods taken from scikit-learn documentation
-# Dictionary of feature selector options. base_params are fixed parameters that also apply to basic_train, with other parameters tunable later in the search space
-feature_selectors_all = {
+# Dictionary of feature selector options. base_params are fixed parameters, with other parameters tunable later in the search space
+feature_selectors = {
     # RFECV with Logistic Regression
     'RFECV_LR': {
         'class': RFECV,
@@ -236,7 +231,7 @@ feature_selectors_all = {
             'estimator': LogisticRegression(),
             'step': 1,
             'cv': StratifiedKFold(5),
-            'scoring': "f1",
+            'scoring': "roc_auc",
             'min_features_to_select': 50,
         }
     },
@@ -247,7 +242,7 @@ feature_selectors_all = {
             'estimator': SVC(kernel='linear'),
             'step': 1,
             'cv': StratifiedKFold(5),
-            'scoring': "f1",
+            'scoring': "roc_auc",
             'min_features_to_select': 50,
         }
     },
@@ -258,7 +253,7 @@ feature_selectors_all = {
             'estimator': RandomForestClassifier(random_state=42),
             'step': 1,
             'cv': StratifiedKFold(5),
-            'scoring': "f1",
+            'scoring': "roc_auc",
             'min_features_to_select': 50,
         }
     },
@@ -270,7 +265,7 @@ feature_selectors_all = {
                                        eval_metric='logloss', random_state=42),
             'step': 1,
             'cv': StratifiedKFold(5),
-            'scoring': "f1",
+            'scoring': "roc_auc",
             'min_features_to_select': 50,
         }
     },
@@ -349,46 +344,252 @@ feature_selectors_all = {
 candidate_fs = ['RFECV_LR', 'RFECV_SVC', 'RFECV_RF', 'RFECV_XGB', 'SFM_LR', 'SFM_SVC', 'SFM_RF', 'SFM_XGB', 'SFM_LAS',
                 'SFS_LR', 'SFS_LSVC', 'SFS_XGB', 'NONE']
 
-# If enabled in config, add to the feature_selectors dictionary for use in basic_train
-feature_selectors = {}
-for fs_name in candidate_fs:
-    if config['model_building']['feature_selectors'].get(fs_name):  # Check if enabled
-        feature_selectors[fs_name] = feature_selectors_all[fs_name]
+# IMPROVE: for the neural set FS methods are simply specified vs automatically evaluated, due to time constraints during
+#  development. Ideally, this would also be implemented for NNs.
 
-### ESTIMATE BEST [NN MODEL EQUIVALENT] WITH BASIC SETTINGS ############################################################
-# todo - set up for NN - using 'X' instead of model; will set up according to what's best for NN but for now just laying out framework of TML
-#  below is a temporary bypass to account for a NN basic_train equivalent not yet being built
-best_X_fs = {}
-best_X_fs['TODO'] = 'NONE' #todo - set to an arbitrary FS method so hyperopt FS can be set up, but needs a basic_train that chooses the best one - see TML
+### ESTIMATE BEST NN MODEL WITH BASIC SETTINGS #########################################################################
+# IMPROVE: The 'basic_train' which evaluates a few different model versions as with the traditional ML model is not yet
+#  implemented. WOuld be interesting to automate layer/activation fucntion/etc experimentation.
 
 ### DEFINE NEURAL NETWORK ##############################################################################################
-#todo: need a basic train that will select [something, presumably a basic neural net] and corresponding feature selector. for now, using this predefined one.
-# todo so has to be selected in hyperopt, which might make this bit redundant
-class O2Classifier(nn.Module): # TODO decide/hyperopt layer #/activation function/# neurons/anything else
-    def __init__(self, input_dim):
-        super().__init__()
-        self.dropout = nn.Dropout(0.7)
-        self.fc1 = nn.Linear(input_dim, 256) # Input layer
-        self.fc2 = nn.Linear(256, 128)
-        self.fc3 = nn.Linear(128, 64)
-        self.fc4 = nn.Linear(64, 1)  # Output layer
-        self.relu = nn.Mish()
+def create_model(params, input_dim):
+    class DynamicO2Classifier(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc1 = nn.Linear(input_dim, int(params['layer1']))
+            self.fc2 = nn.Linear(int(params['layer1']), int(params['layer2']))
+            self.fc3 = nn.Linear(int(params['layer2']), int(params['layer3']))
+            self.fc4 = nn.Linear(int(params['layer3']), 1)
 
-    def forward(self, x):
-        x = self.dropout(x)
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))
-        output =  self.fc4(x).squeeze(1)
-        return output
+            # Activation selection
+            activation_name = params['activation']
+            if activation_name == 'leaky_relu':
+                self.act = nn.LeakyReLU(0.01)
+            elif activation_name == 'mish':
+                self.act = nn.Mish()
+            elif activation_name == 'sigmoid':
+                self.act = nn.Sigmoid()
+            elif activation_name == 'softplus':
+                self.act = nn.Softplus()
+            elif activation_name == 'softsign':
+                self.act = nn.Softsign()
+            elif activation_name == 'selu':
+                self.act = nn.SELU()
+            elif activation_name == 'elu':
+                self.act = nn.ELU()
+            else:  # Default to ReLU
+                self.act = nn.ReLU()
 
+            self.dropout = nn.Dropout(params['dropout'])
+
+        def forward(self, x):
+            x = self.dropout(x)
+            x = self.act(self.fc1(x))
+            x = self.act(self.fc2(x))
+            x = self.act(self.fc3(x))
+            return self.fc4(x).squeeze(1)
+
+    return DynamicO2Classifier()
+
+
+### FUNCTION TO TRAIN FINAL MODEL ######################################################################################
+# Includes options for cross validation and early stopping
+# todo move this to functions
+# Function to train the model - applied to both cross validation and the final model with no validation/early stopping
+def train_model(model, train_loader, val_loader, es_handler, optimiser, verbose=1):
+    all_probs = []
+    all_labels = []
+    auc_roc = 0 # Initiliase so when training without calculating auc_roc, it will return a value instead of erroring
+    epoch_stop = n_epochs  # Initialise as max range of epochs
+    # Training loop
+    for epoch in range(n_epochs):
+        # Training phase
+        model.train()  # Sets the model to training mode, enabling operations like dropout (if present)
+        train_loss = 0
+        for batch_idx, batch in enumerate(train_loader):
+            # Move the batch data to the same device as the model (GPU or CPU)
+            features = batch[0].to(device)  # Selects input features
+            labels = batch[1].to(device)  # Selects labels
+
+            # Forward pass
+            outputs = model(features).squeeze()
+            loss = criterion(outputs,
+                             labels)  # Calculates the classification error between predictions (outputs) and true labels (labels) using the cross-entropy loss
+
+            # Backward pass and optimization
+            optimiser.zero_grad()  # Resets gradients from the previous iteration to prevent accumulation
+            loss.backward()  # Computes the gradients of the loss with respect to the model parameters via backpropagation
+            optimiser.step()  # Updates the model parameters using the computed gradients
+
+            train_loss += loss.item()  # Accumulates the total loss for the epoch to monitor training progress
+
+        avg_train_loss = train_loss / len(train_loader)
+
+        # Print loss
+        if verbose:
+            if (epoch == 0) or ((epoch + 1) % nth_epoch == 0) or (
+                    epoch == n_epochs - 1):  # Print every nth epoch or first/last epoch
+                print(
+                    f"Epoch {epoch + 1}, Loss: {avg_train_loss}")  # Logs the average loss per epoch to track improvement
+
+        # Validation phase - for CV only
+        if es_handler is not None:  # Run early stopping
+            model.eval()
+            val_loss = 0
+            with torch.no_grad():
+                for batch in val_loader:
+                    features = batch[0].to(device)
+                    labels = batch[1].to(device)
+                    output = model(features).squeeze()
+                    loss = criterion(output, labels)
+                    val_loss += loss.item()
+
+            val_loss = val_loss / len(val_loader)
+
+            if early_stopping:
+                # Check early stopping condition
+                es_handler.check_early_stop(val_loss)
+                if es_handler.stop_training:
+                    print(f"Early stopping at epoch {epoch}")
+                    epoch_stop = epoch + 1
+                    break
+
+        # Calculate final AUROC score on validation set when supplied
+        if val_loader is not None:
+            model.eval()
+            with torch.no_grad():
+                for batch in val_loader:
+                    features = batch[0].to(device)
+                    labels = batch[1].to(device)
+                    output = model(features).squeeze() # Raw outputs from the model
+
+                    probs = torch.sigmoid(output)
+                    all_probs.extend(probs.cpu().numpy())
+                    all_labels.extend(labels.cpu().numpy())
+            # Calculate AUROC
+            auc_roc = roc_auc_score(all_labels, all_probs)
+
+    return auc_roc, epoch_stop
+
+criterion = nn.BCEWithLogitsLoss()  # Binary Cross Entropy with built-in sigmoid
 ### OBJECTIVE FUNCTION FOR HYPEROPT PARAMETER TUNING ###################################################################
-# TODO: again see TML for structure. After/during setting up NN hyperopt refer back so theyre similar in structure
+
+# Define classifier type
+  # IMPROVE: This is used to be similar in structure to the traditional model; could be used after a similar basic_train
+  #  function is implemented. For now, just stores best result for the defined model
+classifier_type = 'neural_network'
+
+# Dictionary to store the best model accuracies
+best_roc = {
+    'neural_network': 0.0,
+}
 
 def objective(params):
-    # ... todo set up for NN. Needs to also implement the fs space.
-    pass
+    # Set feature selector and parameters based on classifier type
+    fs_params = params.pop('fs_params', {})  # Remove FS params from classifier search space
+    # Get selector configuration
+    selector_config = feature_selectors[selector_type]
 
+    # Check for invalid layer setup
+    if params['layer1'] < params['layer2'] or params['layer2'] < params['layer3']:
+        return {'loss': 0.0, 'status': STATUS_FAIL}
+
+    ### Build the feature selector
+    if selector_type == 'NONE':
+        selector = 'passthrough'
+    else:
+        # Merge base parameters with tuned parameters - the base_params are overwritten by the hyperopt fs_params
+        all_params = {**selector_config['base_params'], **fs_params}
+
+        ### Convert feature selection parameters to integers where required
+        # Note: same conversion is done for different selector types
+        if 'min_features_to_select' in all_params:
+            all_params['min_features_to_select'] = int(all_params['min_features_to_select'])
+
+        # Update params
+        selector = selector_config['class'](**all_params)
+
+    # Start MLFlow run for each trial
+    with mlflow.start_run(nested=True):
+        mlflow.set_tag("Corresponding final model",f"{run_name}")  # Can find the name of the trained model using this tag
+        # Log trial hyperparameters
+        mlflow.log_params({**params, "type": classifier_type, **{"fs_" + k: v for k, v in fs_params.items()}})
+
+        # Incorporate required preprocessing/FS steps and the model
+        hp_preprocessor = Pipeline([
+            ('int_to_float', IntToFloatTransformer()),
+            ('var_thresh', VarianceThreshold(threshold=0.0)),
+            ('scaler', StandardScaler()),
+            ('feature_selector', selector if feature_selection else 'passthrough')
+        ])
+
+        # Call function to train model #IMPROVE - exact copy of CV script - more elegant way to implement this eg function
+        kfold = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)  # Set to three due to small dataset sizes
+        roc_scores = []
+        for fold, (train_idx, val_idx) in enumerate(kfold.split(X_train, y_train)):
+
+            # Create datasets for this fold
+            X_train_hp = X_train.iloc[train_idx]
+            y_train_hp = y_train.iloc[train_idx] if hasattr(y_train, 'iloc') else y_train[train_idx]
+            X_val_hp = X_train.iloc[val_idx]
+            y_val_hp = y_train.iloc[val_idx] if hasattr(y_train, 'iloc') else y_train[val_idx]
+
+            # Fit preprocessor
+            X_train_hp_processed = hp_preprocessor.fit_transform(X_train_hp, y_train_hp)
+            X_val_hp_processed = hp_preprocessor.transform(X_val_hp)
+
+            # Create data loaders for this fold
+            train_dataset_hp = TensorDataset(
+                torch.FloatTensor(X_train_hp_processed),
+                torch.FloatTensor(y_train_hp.values if hasattr(y_train_hp, 'values') else y_train_hp)
+            )
+            val_dataset_hp = TensorDataset(
+                torch.FloatTensor(X_val_hp_processed),
+                torch.FloatTensor(y_val_hp.values if hasattr(y_val_hp, 'values') else y_val_hp)
+            )
+
+            train_loader_hp = DataLoader(train_dataset_hp, batch_size=int(params['batch_size']), shuffle=True)
+            val_loader_hp = DataLoader(val_dataset_hp, batch_size=12, shuffle=False)  # todo batch size - will also error if it creates a size of 1 at any point
+
+            # Initialize fresh model and early stopping for this fold (note early stopping is only determined for the final model in the cross validation section and not stored for this iteration)
+            input_dim_hp = X_train_hp_processed.shape[1]  # Get input dim from processed data
+
+            # Create model
+            model = create_model(params, input_dim_hp)
+            model.to(device)
+
+            # Optimiser setup
+            opt_class = {
+                'Adam': torch.optim.Adam,
+                'SGD': torch.optim.SGD,
+                'RMSprop': torch.optim.RMSprop,
+                'Adagrad': torch.optim.Adagrad,
+                'Adamax': torch.optim.Adamax,
+                'Nadam': torch.optim.NAdam,
+            }[params['optimiser']]
+
+            optimiser = opt_class(model.parameters(), lr=params['lr'], weight_decay=params['weight_decay'])
+ # todo greyed out - possibly fixed idk
+            # Reset early stopping for this fold
+            if early_stopping:
+                es_handler = EarlyStopping(patience=patience, delta=delta, verbose=False)
+            else:
+                es_handler = None
+
+            # Train and get AUROC score
+            roc, epoch_stop = train_model(model, train_loader_hp, val_loader_hp, es_handler, optimiser,  verbose=False)
+            roc_scores.append(roc)
+
+        # Evaluate the model after CV with AUROC
+        roc_score_mean = np.mean(roc_scores).astype(np.float32)
+
+        # Log the best RO_AUC for each model type if improved
+        if roc_score_mean > best_roc[classifier_type]:
+            best_roc[classifier_type] = roc_score_mean
+            mlflow.log_metric(f"best_{classifier_type}_AUROC", roc_score_mean)
+
+    # Because fmin() tries to minimize the objective, this function must return the negative accuracy.
+    return {'loss': -roc_score_mean, 'status': STATUS_OK}
 
 ### DEFINE SEARCH SPACES PER FEATURE SELECTOR ##########################################################################
 selector_param_spaces = { # Note: for new data, values may need to be tweaked as in feature selection parameter tuning, some fits can fail and crash the script
@@ -450,10 +651,37 @@ selector_param_spaces = { # Note: for new data, values may need to be tweaked as
         'scoring' : hp.choice('refcv_scoring', ['f1', 'accuracy', 'roc_auc']),
         'cv' : hp.choice('refcv_cv', [StratifiedKFold(5), StratifiedKFold(10)])
     },
+    'NONE': {
+
+    }
+
 }
 
-### DEFINE SEARCH SPACES PER MODEL #####################################################################################
-  # TODO need TML equivalent for NN
+### DEFINE SEARCH SPACE FOR THE MODEL ##################################################################################
+search_space = {
+    # Layer sizes: use stepwise reduction
+    'layer1': hp.quniform('layer1', 64, 512, 32),
+    'layer2': hp.quniform('layer2', 32, 256, 16),
+    'layer3': hp.quniform('layer3', 16, 128, 8),
+
+    # Regularisation
+    'dropout': hp.uniform('dropout', 0.0, 0.8),
+    'weight_decay': hp.loguniform('weight_decay', np.log(1e-6), np.log(1e-2)),
+
+    # Optimisation
+    'lr': hp.loguniform('lr', np.log(1e-4), np.log(0.1)),
+    'optimiser': hp.choice('optimiser', ['SGD', 'Adam', 'RMSprop', 'Adagrad', 'Adamax', 'Nadam']),
+    'batch_size': hp.choice('batch_size', [64, 48, 32]),
+    'epochs': hp.quniform('epochs', 10, 1000, 10),
+
+    # Activation
+    'activation': hp.choice('activation', ['relu', 'leaky_relu', 'mish', 'sigmoid', 'softplus', 'softsign',
+        'selu', 'elu' ]),
+
+    # Feature selection
+    'fs_params': selector_param_spaces[selector_type]
+
+}
 
 ### MLFLOW TRACKING ####################################################################################################
 # Make folder for tracking runs
@@ -487,7 +715,68 @@ if not args.from_pipeline:
      # WARNING: Run name is not automatically imported to external_validation.py if running standalone to allow specific runs to be used. Set manually.
 
 ### HYPEROPT TUNING WITH MLFLOW ########################################################################################
-#todo adapt TML for NN
+print("\nNow tuning hyperparameters...\n")
+
+mlflow.set_experiment("Oxygen Prediction NN - Hyperparams") # Note: Could use same experiment ID as the final model in order to compare; for now I find it easier to keep them separate.
+with mlflow.start_run(run_name=hyperopt_name) as run:
+    mlflow.set_tag("Phase", "Hyperopt parameter tuning")
+    best_result = fmin(
+        fn=objective,
+        space=search_space,
+        algo=tpe.suggest,
+        max_evals=max_evals,
+        trials=Trials()
+    )
+    # Print run id
+    hyper_run_id = run.info.run_id
+    store_hyp_id = f"Run {run_name} for hyperparameter training completed. Run ID is {hyper_run_id}. See nested runs for individual trials"
+
+# Print the best accuracies for each model type
+print("\nHighest network AUROC on train data:")
+best_roc_df = pd.DataFrame(list(best_roc.items()), columns=['Models', 'Highest AUROC'])
+print(best_roc_df)
+
+# Extract and print the best hyperparameter configuration
+best_config = space_eval(search_space, best_result)
+print("\nBest model configuration:")
+best_config_df = pd.DataFrame(list(best_config.items()), columns=['Parameters', 'Values'])
+print(best_config_df)
+
+# Define tuned classifier
+class O2Classifier(nn.Module):
+    def __init__(self, input_dim):
+        super().__init__()
+        self.fc1 = nn.Linear(input_dim, int(best_config['layer1']))
+        self.fc2 = nn.Linear(int(best_config['layer1']), int(best_config['layer2']))
+        self.fc3 = nn.Linear(int(best_config['layer2']), int(best_config['layer3']))
+        self.fc4 = nn.Linear(int(best_config['layer3']), 1)
+        self.dropout = nn.Dropout(best_config['dropout'])
+
+        # Instantiate the activation function
+        activation_name = best_config['activation']
+        if activation_name == 'leaky_relu':
+            self.act = nn.LeakyReLU(0.01)
+        elif activation_name == 'mish':
+            self.act = nn.Mish()
+        elif activation_name == 'sigmoid':
+            self.act = nn.Sigmoid()
+        elif activation_name == 'softplus':
+            self.act = nn.Softplus()
+        elif activation_name == 'softsign':
+            self.act = nn.Softsign()
+        elif activation_name == 'selu':
+            self.act = nn.SELU()
+        elif activation_name == 'elu':
+            self.act = nn.ELU()
+        else:  # Default to ReLU
+            self.act = nn.ReLU()
+
+    def forward(self, x):
+        x = self.dropout(x)
+        x = self.act(self.fc1(x))
+        x = self.act(self.fc2(x))
+        x = self.act(self.fc3(x))
+        return self.fc4(x).squeeze(1)
 
 ### EARLY STOPPING #####################################################################################################
 # Basic setup for early stopping criteria
@@ -519,9 +808,7 @@ class EarlyStopping:
 
 ### TRAIN FINAL MODEL ##################################################################################################
 #todo many parts were deleted from TML framework, so copy in later
-
-# Set device
-device = "cuda" if torch.cuda.is_available() else "cpu" # Automatically uses a GPU if available; otherwise, defaults to the CPU
+# todo edit code comment blocks/move around
 
 # Create a new MLflow Experiment
 mlflow.set_experiment("Oxygen Prediction Neural Network - Surrey")
@@ -536,20 +823,33 @@ with mlflow.start_run(run_name=run_name) as run:
     mlflow.set_tag("Run name", run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
     mlflow.set_tag("ML type", "Neural network")
     mlflow.set_tag("Phase", "Final model training")
-    mlflow.set_tag("Hyperopt MLflow run", 'hyperopt_name') # todo should be hyperopt_name variable not str but not currently set up
+    mlflow.set_tag("Hyperopt MLflow run", hyperopt_name)
     mlflow.log_param("mlflow_run_name", run.info.run_name)
     final_exp_id = run.info.experiment_id # Get experiment id for folder management
 
+    # Extract the best classifier type #IMPROVE not needed for current NN code
+    classifier_type = 'neural_network'
+
+    # Get parameters for the classifier and feature selector
+    fs_params = best_config.get('fs_params', {})  # Feature selector params
+    # Convert to integers where needed
+    if 'min_features_to_select' in fs_params:
+        fs_params['min_features_to_select'] = int(fs_params['min_features_to_select'])
+    # Assign best parameters for the model
+    best_params = {k: v for k, v in best_config.items() if k not in ['type', 'fs_params']}
+
     # Get selector configuration
-    selector_type = best_X_fs['TODO'] #todo stand in to replace basic_train which isn't yet implemented
     selector_config = feature_selectors[selector_type]
 
     # Build selector
     if selector_type == 'NONE':
         selector = 'passthrough'
     else:
-        all_params = {**selector_config['base_params']} # TODO ', **fs_params' was removed from here as hyperopt training hasn't been done yet - will just use the default FS
+        all_params = {**selector_config['base_params'], **fs_params}
         selector = selector_config['class'](**all_params)
+
+    # Log the best hyperparameters
+    mlflow.log_params(best_config)
 
     # Create the preprocessing pipeline
     preprocessor = Pipeline([
@@ -596,83 +896,10 @@ with mlflow.start_run(run_name=run_name) as run:
     print(f"Training samples: {len(train_dataset)} | Validation samples: {val_sample_len} | Test samples: {len(test_dataset)}")
     print(f"Feature dimensions: {X_train.shape[1]} | Classes: {len(np.unique(y_train))}")
 
-    ### TRAIN NEURAL NETWORK ###########################################################################################
-    criterion = nn.BCEWithLogitsLoss()  # Binary Cross Entropy with built-in sigmoid
-
-    # Function to train the model - applied to both cross validation and the final model with no validation/early stopping
-    def train_model(model, train_loader, val_loader, es_handler, verbose=1):
-        all_preds = []
-        all_labels = []
-        epoch_stop = n_epochs  # Initialise as max range of epochs
-        # Training loop
-        for epoch in range(n_epochs):
-            # Training phase
-            model.train()  # Sets the model to training mode, enabling operations like dropout (if present)
-            train_loss = 0
-            for batch_idx, batch in enumerate(train_loader):
-                # Move the batch data to the same device as the model (GPU or CPU)
-                features = batch[0].to(device)  # Selects input features
-                labels = batch[1].to(device)  # Selects labels
-
-                # Forward pass
-                outputs = model(features).squeeze()
-                loss = criterion(outputs, labels)  # Calculates the classification error between predictions (outputs) and true labels (labels) using the cross-entropy loss
-
-                # Backward pass and optimization
-                optimiser.zero_grad()  # Resets gradients from the previous iteration to prevent accumulation
-                loss.backward()  # Computes the gradients of the loss with respect to the model parameters via backpropagation
-                optimiser.step()  # Updates the model parameters using the computed gradients
-
-                train_loss += loss.item()  # Accumulates the total loss for the epoch to monitor training progress
-
-            avg_train_loss = train_loss / len(train_loader)
-
-            # Print loss
-            if verbose:
-                if (epoch == 0) or ((epoch + 1) % nth_epoch == 0) or (epoch == n_epochs - 1):  # Print every nth epoch or first/last epoch
-                    print(f"Epoch {epoch + 1}, Loss: {avg_train_loss}")  # Logs the average loss per epoch to track improvement
-
-            # Validation phase - for CV only
-            if es_handler is not None: # Run early stopping
-                model.eval()
-                val_loss = 0
-                with torch.no_grad():
-                    for batch in val_loader:
-                        features = batch[0].to(device)
-                        labels = batch[1].to(device)
-                        output = model(features).squeeze()
-                        loss = criterion(output, labels)
-                        val_loss += loss.item()
-
-                val_loss = val_loss / len(val_loader)
-
-                if early_stopping:
-                    # Check early stopping condition
-                    es_handler.check_early_stop(val_loss)
-                    if es_handler.stop_training:
-                        print(f"Early stopping at epoch {epoch}")
-                        epoch_stop = epoch + 1 #todo why is this greyed out as 'not used'
-                        break
-
-            # Calculate final F1 score on validation set
-            if val_loader is not None:
-                model.eval()
-                with torch.no_grad():
-                    for batch in val_loader:
-                        features = batch[0].to(device)
-                        labels = batch[1].to(device)
-                        output = model(features).squeeze()
-
-                        preds = torch.sigmoid(output) > 0.5
-                        all_preds.extend(preds.cpu().numpy())
-                        all_labels.extend(labels.cpu().numpy())
-
-        return f1_score(all_labels, all_preds), epoch_stop
-
     ### CROSS-VALIDATE #################################################################################################
     # Call function to train model
     kfold = StratifiedKFold(n_splits=3, shuffle=True, random_state=42) # Set to three due to small dataset sizes
-    f1_scores = []
+    roc_scores = []
     stopping_epochs = [] # best epochs per fold
     for fold, (train_idx, val_idx) in enumerate(kfold.split(X_train, y_train)):
 
@@ -711,20 +938,21 @@ with mlflow.start_run(run_name=run_name) as run:
         else:
             es_handler = None
 
-        # Train and get F1 score
-        f1, epoch_stop = train_model(model, train_loader_fold, val_loader_fold, es_handler, verbose=False)
-        print(f"Fold {fold + 1} F1 Score: %.4f\n" % f1)
-        mlflow.log_metric(f"Fold {fold + 1} F1 Score", f1)
-        f1_scores.append(f1)
+        # Train and get AUROC score
+        roc, epoch_stop = train_model(model, train_loader_fold, val_loader_fold, es_handler, optimiser, verbose=False)
+        print(f"Fold {fold + 1} AUROC Score: {roc:.4f}\n")
+        print("Fold %d AUROC Score: %.4f\n" % (fold + 1, roc))
+        mlflow.log_metric(f"Fold {fold + 1} AUROC Score", roc)
+        roc_scores.append(roc)
         stopping_epochs.append(epoch_stop)
 
      # Find average best_epoch from CV
     avg_best_epoch = int(np.mean(stopping_epochs))
     print(f"Average best epoch: {avg_best_epoch}")
 
-    # Evaluate the model after CV wit hF1
-    mean = np.mean(f1_scores)
-    std = np.std(f1_scores)
+    # Evaluate the model after CV with AUROC
+    mean = np.mean(roc_scores)
+    std = np.std(roc_scores)
     print("Cross-Validation Results: %.2f%% (+/- %.2f%%)" % (mean * 100, std * 100))
 
     ### TRAIN FINAL MODEL ON TRAINING SET ##############################################################################
@@ -738,9 +966,9 @@ with mlflow.start_run(run_name=run_name) as run:
     optimiser = torch.optim.Adam(final_model.parameters(), lr=5e-4)  # Updates the model’s parameters to minimize the loss function
 
     # Train final model for the average best epoch count (no early stopping needed)
-    print(f"\nNow training final model with {avg_best_epoch} epochs.\n")
+    print(f"\nNow training final model with {avg_best_epoch} epochs.\n") #TODO no longer accurate if hyperopt
     n_epochs = avg_best_epoch  # Set to average best epoch
-    train_model(final_model, train_full_loader, None, es_handler=None, verbose=True)
+    train_model(final_model, train_full_loader, None, es_handler=None, optimiser=optimiser, verbose=True)
 
     # Save input features for validation - JSON (human-readable) and joblib
     with open(f"{output_data_dir}/input_features.json", "w") as f:
@@ -848,8 +1076,8 @@ with mlflow.start_run(run_name=run_name) as run:
     mlflow.log_metric("test_accuracy", test_accuracy)
     print(f"Test F1 with best model: {test_f1:.4f}")
     mlflow.log_metric("test_f1", test_f1)
-    print(f"Test ROC_AUC with best model: {test_roc_auc:.4f}\n")
-    mlflow.log_metric("test_roc_auc", test_roc_auc)
+    print(f"Test AUROC with best model: {test_roc_auc:.4f}\n")
+    mlflow.log_metric("test_roc", test_roc_auc)
 
     # TODO AI GEN TEMP OUTPUTS - find and make my own (eg CM already has a function)
 
@@ -944,9 +1172,9 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     shutil.copytree(data_folder, output_folder / data_dir, dirs_exist_ok=True)
     shutil.copytree(graph_folder, output_folder / graphs_dir, dirs_exist_ok=True)
 
-    # # Make note of the corresponding hyperopt MLflow run #todo commented out while hyperopt isn't set up
-    # hyper_run_file = final_folder / "hyperopt_run_name.txt"
-    # hyper_run_file.write_text(f"{hyperopt_name}")
+    # # Make note of the corresponding hyperopt MLflow run
+    hyper_run_file = final_folder / "hyperopt_run_name.txt"
+    hyper_run_file.write_text(f"{hyperopt_name}")
 
 # Print run ids
 # print(store_hyp_id) #todo commented out while hyperopt isn't set up

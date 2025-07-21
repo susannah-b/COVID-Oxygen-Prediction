@@ -97,6 +97,8 @@ if validate:
     regular_meds = False
     print("\nDisabling text-to-binary conversion due to validation being set to True.")
 
+np.random.seed(42)
+
 ########################################################################################################################
 # todo - change cwd to github folder; currently assumes it's in there already. maybe for other scripts. including pipeline.py
 

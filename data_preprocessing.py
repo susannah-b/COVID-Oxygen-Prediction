@@ -56,6 +56,8 @@ drop_metadata = config['data_preprocessing']['drop_metadata'] # Whether to drop 
 num_datasets = config['data_preprocessing']['num_datasets_imputation'] # num_datasets for miceforest imputation
 iterations = config['data_preprocessing']['iterations_imputation'] # iterations for miceforest imputation
 
+np.random.seed(42)
+
 ### PREPARE THE DATA ###################################################################################################
 
 # Create output directories for the data
