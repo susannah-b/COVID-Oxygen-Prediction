@@ -106,6 +106,7 @@ nth_epoch = config['neural_network']['nth_epoch'] # Every nth epoch, print the l
 learn_rate = float(config['neural_network']['learning_rate']) # Learning rate for NN #todo hypertune?
 early_stopping = config['neural_network']['early_stopping'] # Whether to implement early stopping
 validation_size = config['neural_network']['validation_size'] # Proportional size of the validation set for cross validation/early stopping
+use_set_search_space = config['neural_network']['use_set_search_space']
 
 ### READ IN DATA #######################################################################################################
 # Set pandas to display all columns and longer rows # IMPROVE remove in final version
@@ -584,8 +585,9 @@ def objective(params):
 
         # Evaluate the model after CV with AUROC
         roc_score_mean = np.mean(roc_scores).astype(np.float32)
+        roc_score_mean = np.mean(roc_scores).astype(np.float32)
 
-        # Log the best RO_AUC for each model type if improved
+        # Log the best AUROC for each model type if improved
         if roc_score_mean > best_roc[classifier_type]:
             best_roc[classifier_type] = roc_score_mean
             mlflow.log_metric(f"best_{classifier_type}_AUROC", roc_score_mean)
@@ -674,7 +676,7 @@ search_space = {
     'lr': hp.loguniform('lr', np.log(1e-4), np.log(0.1)),
     'optimiser': hp.choice('optimiser', ['SGD', 'Adam', 'RMSprop', 'Adagrad', 'Adamax', 'Nadam']),
     'batch_size': hp.choice('batch_size', [64, 48, 32]),
-    'epochs': hp.quniform('epochs', 10, 1000, 10),
+    'epochs': hp.quniform('epochs', 10, 1000, 30),
 
     # Activation
     'activation': hp.choice('activation', ['relu', 'leaky_relu', 'mish', 'sigmoid', 'softplus', 'softsign',
@@ -684,6 +686,25 @@ search_space = {
     'fs_params': selector_param_spaces[selector_type]
 
 }
+
+fixed_search_space = {
+    'layer1': 256,
+    'layer2': 128,
+    'layer3': 64,
+    'dropout': 0.7,
+    'weight_decay': 0,
+    'lr': 5e-4,
+    'optimiser': 'Adam',
+    'batch_size': 32,
+    'epochs': 300,
+    'activation': 'mish',
+    'fs_params': selector_param_spaces[selector_type]
+}
+# Set search space to use - used to bypass hyperopt and test fixed parameters
+  # IMPROVE: This was implemented because the results from hyperopt weren't exceed my results with set parameters - ideally resolve this (e.g. changing input params, perhaps how hyperopt evaluates 'best' model, or editing/removing CV in hyperopt)
+if use_set_search_space:
+    search_space = fixed_search_space
+    max_evals = 1
 
 ### MLFLOW TRACKING ####################################################################################################
 # Make folder for tracking runs
@@ -945,7 +966,6 @@ with mlflow.start_run(run_name=run_name) as run:
         # Train and get AUROC score
         roc, epoch_stop = train_model(model, train_loader_fold, val_loader_fold, es_handler, optimiser, verbose=False)
         print(f"Fold {fold + 1} AUROC Score: {roc:.4f}\n")
-        print("Fold %d AUROC Score: %.4f\n" % (fold + 1, roc))
         mlflow.log_metric(f"Fold {fold + 1} AUROC Score", roc)
         roc_scores.append(roc)
         stopping_epochs.append(epoch_stop)
@@ -1186,6 +1206,7 @@ print(store_final_id)
 
 # WARNING: If getting the 'too many 500 error responses' warning due to deleting files, run 'kill $(lsof -t -i tcp:8080)' in the terminal
 
+# TODO - is FS also applied within hyperopt in the TML? Runs with slow selectors take a long time which I don't remember from TML - but could be due to difference in selectors
 
 
 

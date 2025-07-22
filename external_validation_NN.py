@@ -148,7 +148,7 @@ mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "69_0721-205422_fs" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "47_0720-234508_cross_validation_ES" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 

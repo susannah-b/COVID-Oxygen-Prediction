@@ -98,4 +98,10 @@ neural_network:
     # Whether to use early stopping during training. If True, will stop training if validation loss does not improve for a set number of epochs.
   validation_size: 0.15
     # Size of the validation set as a fraction of the training set
+  feature_selection:
+    # For neural networks, FS is set manually for now. 
+    selector: 'NONE'
+    # Specify here, see the feature selectors dict in the neural network training script for options
+  use_set_search_space:
+    # Whether to use a fixed search space for hyperopt (ie no hyperparameter tuning) - the values can be changed in neural_network.py
 
