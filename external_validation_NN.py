@@ -148,7 +148,7 @@ mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "107_0723-125036_graphs" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "143_0723-204940_graphs" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
@@ -202,7 +202,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
     # Get prediction metrics
     test_accuracy = accuracy_score(y_data, predictions)
     test_f1 = f1_score(y_data, predictions)
-    test_roc_auc = roc_auc_score(y_data, y_proba)
+    test_roc = roc_auc_score(y_data, y_proba)
     tn, fp, fn, tp = cm.ravel()
     sensitivity = tp / (tp + fn) # aka TPR, recall
     specificity = tn / (tn + fp) # aka TNR
@@ -214,8 +214,8 @@ with mlflow.start_run(run_name=val_run_name) as run:
     mlflow.log_metric("test_accuracy", test_accuracy)
     print(f"Validation F1 score: {test_f1:.4f}")
     mlflow.log_metric("test_f1", test_f1)
-    print(f"Validation ROC_AUC: {test_roc_auc:.4f}")
-    mlflow.log_metric("test_roc", test_roc_auc)
+    print(f"Validation ROC_AUC: {test_roc:.4f}")
+    mlflow.log_metric("test_roc", test_roc)
     mlflow.log_metric("sensitivity-tpr-recall", sensitivity)
     mlflow.log_metric("specificity-tnr", specificity)
     mlflow.log_metric("precision-ppv", precision)
@@ -274,7 +274,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
     # plot_calibration_curve(model, X_data, y_data, classifier_type, graphs_dir) #todo remove/fix this for NN
 
     # Plot a precision-recall curve
-    plot_precision_recall(model, X_data, y_data, graphs_dir)
+    plot_precision_recall(y_proba, y_data, graphs_dir)
 
     ### Plot PCA on final predictions - Test data
     with mlflow.start_run(nested=True):  # Start another run to avoid autologging conflicts
@@ -314,6 +314,32 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     # Copy training data and graphs folder
     shutil.copytree(data_folder, output_folder / data_dir, dirs_exist_ok=True)
     shutil.copytree(graph_folder, output_folder / graphs_dir, dirs_exist_ok=True)
+
+    # Read in key metrics from training and update for validation
+    key_metrics_path = f"{model_output}/key_metrics_{model_name}.csv"
+    existing_metrics = pd.read_csv(key_metrics_path, index_col=0)
+    key_metrics = {
+        'NN Validation Accuracy': test_accuracy,
+        'NN Validation F1': test_f1,
+        'N Validation AUROC': test_roc,
+    }
+    # Update existing metrics
+    for key, value in key_metrics.items():
+        existing_metrics[key] = value
+    existing_metrics.to_csv(key_metrics_path)
+
+    # Update the master metrics file
+    all_key_metrics_path = "key_metrics.csv"
+    if os.path.exists(all_key_metrics_path):
+        all_metrics = pd.read_csv(all_key_metrics_path, index_col=0)
+        # Drop existing row if present
+        all_metrics.drop(index=model_name, errors='ignore', inplace=True)
+        # Update
+        if run_name not in all_metrics.index:
+            all_metrics = pd.concat([all_metrics, existing_metrics])
+    else:
+        all_metrics = existing_metrics
+    all_metrics.to_csv(all_key_metrics_path)
 
 # Print run ids
 print(store_val_id)

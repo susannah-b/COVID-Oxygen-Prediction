@@ -73,6 +73,7 @@ model_building:
     # Models to test as part of basic_train; determines which will be carried to the tuning stage
     Logistic_regression: True
     SVM: True
+    # Currently SVM should be switched off as certain functions will produce incorrect results due to no predict_proba. If using, check the script to see which.
     Random_forest: True
     AdaBoost: True
     Gradient_boosting: True
@@ -83,7 +84,7 @@ model_building:
   max_evals: 3 # Set to 3 for testing but will need to be increased for real training runs
     # Change this as needed
   track_final: true 
-    # Whether to copy the model_output to the designated folder for easier browsing
+    # Whether to copy the model_output to the designated folder for easier browsing - some functions depend on this so it's strongly recommended to leave it on.
 
 
 # NOTE: currently using pre-existing ML settings. some (eg var threshold, model_choice) could be set individually
@@ -102,6 +103,6 @@ neural_network:
     # For neural networks, FS is set manually for now. 
     selector: 'NONE'
     # Specify here, see the feature selectors dict in the neural network training script for options
-  use_set_search_space:
+  use_set_search_space: False
     # Whether to use a fixed search space for hyperopt (ie no hyperparameter tuning) - the values can be changed in neural_network.py
 

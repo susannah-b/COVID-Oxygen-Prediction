@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 import warnings
 from functions import port_in_use, pca_original, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
-    plot_pca_predicted, plot_confusion_matrix
+    plot_pca_predicted, plot_confusion_matrix, plot_decision_distribution, plot_permutation_importance
 import re
 import os
 from datetime import datetime
@@ -102,7 +102,7 @@ selector_type = config['neural_network']['feature_selection']['selector'] # Feat
 max_evals = config['model_building']['max_evals'] # How many evaluations to do in hyperopt tuning
 track_final = config['model_building']['track_final'] # Whether to copy the model_output to the designated folder for easier browsing
 batch_size = config['neural_network']['batch_size'] # Batch size to use for the neural net
-n_epochs = config['neural_network']['n_epochs'] # How many epochs to run # TODO this is now irrelevant with hyperopt - although could skip epoch tuning if set
+n_epochs = config['neural_network']['n_epochs'] # How many epochs to run
 nth_epoch = config['neural_network']['nth_epoch'] # Every nth epoch, print the loss
 learn_rate = float(config['neural_network']['learning_rate']) # Learning rate for NN #todo hypertune?
 early_stopping = config['neural_network']['early_stopping'] # Whether to implement early stopping
@@ -392,16 +392,45 @@ def create_model(params, input_dim):
 
     return DynamicO2Classifier()
 
+### EARLY STOPPING #####################################################################################################
+# Basic setup for early stopping criteria
+patience = 5  # Epochs to wait after no improvement
+delta = 0.01  # Minimum change in the loss
+best_val_loss = float("inf")  # Best validation loss to compare against
+no_improvement_count = 0 # Count epochs since improvement
+
+# Define class
+class EarlyStopping:
+    def __init__(self, patience=5, delta=0.0, verbose=False):
+        self.patience = patience
+        self.delta = delta
+        self.verbose = verbose
+        self.best_loss = None
+        self.no_improvement_count = 0
+        self.stop_training = False
+
+    def check_early_stop(self, val_loss):
+        if self.best_loss is None or val_loss < self.best_loss - self.delta:  #If loss is improving
+            self.best_loss = val_loss
+            self.no_improvement_count = 0
+        else: # Track duration without improvement and trigger break
+            self.no_improvement_count += 1
+            if self.no_improvement_count >= self.patience:
+                self.stop_training = True
+                if self.verbose:
+                    print("Stopping early as no improvement has been observed.")
 
 ### FUNCTION TO TRAIN FINAL MODEL ######################################################################################
 # Includes options for cross validation and early stopping
-# todo move this to functions
+# todo move this to functions & imprve structure, eg final train bool could also turn of ES etc, validation set should be set up better instead of requiring/returning none
 # Function to train the model - applied to both cross validation and the final model with no validation/early stopping
 def train_model(model, train_loader, val_loader, es_handler, optimiser, verbose=1):
     all_probs = []
     all_labels = []
     auc_roc = 0 # Initiliase so when training without calculating auc_roc, it will return a value instead of erroring
     epoch_stop = n_epochs  # Initialise as max range of epochs
+    training_losses = []
+    validation_losses = []
     # Training loop
     for epoch in range(n_epochs):
         # Training phase
@@ -425,6 +454,7 @@ def train_model(model, train_loader, val_loader, es_handler, optimiser, verbose=
             train_loss += loss.item()  # Accumulates the total loss for the epoch to monitor training progress
 
         avg_train_loss = train_loss / len(train_loader)
+        training_losses.append(avg_train_loss)
 
         # Print loss
         if verbose:
@@ -445,11 +475,11 @@ def train_model(model, train_loader, val_loader, es_handler, optimiser, verbose=
                     loss = criterion(output, labels)
                     val_loss += loss.item()
 
-            val_loss = val_loss / len(val_loader)
+            avg_val_loss = val_loss / len(val_loader)
 
             if early_stopping:
                 # Check early stopping condition
-                es_handler.check_early_stop(val_loss)
+                es_handler.check_early_stop(avg_val_loss)
                 if es_handler.stop_training:
                     print(f"Early stopping at epoch {epoch}")
                     epoch_stop = epoch + 1
@@ -458,21 +488,31 @@ def train_model(model, train_loader, val_loader, es_handler, optimiser, verbose=
         # Calculate final AUROC score on validation set when supplied
         if val_loader is not None:
             model.eval()
+            val_loss = 0 #IMPROVE - for loss curve this is calculated again here (same as for early stopping check above) in the cross validation loop - function needs to be condensed to be more efficient!
             with torch.no_grad():
                 for batch in val_loader:
                     features = batch[0].to(device)
                     labels = batch[1].to(device)
                     output = model(features).squeeze() # Raw outputs from the model
+                    loss = criterion(output, labels)
+                    val_loss += loss.item()
 
                     probs = torch.sigmoid(output)
                     all_probs.extend(probs.cpu().numpy())
                     all_labels.extend(labels.cpu().numpy())
             # Calculate AUROC
             auc_roc = roc_auc_score(all_labels, all_probs)
+            # Store validation losses for loss curve
+            avg_val_loss = val_loss / len(val_loader)
+            validation_losses.append(avg_val_loss) # Stores loss per epoch
 
-    return auc_roc, epoch_stop
+    if val_loader is not None: # If supplying a validation set, ie for ES check or CV
+        return auc_roc, epoch_stop, training_losses, validation_losses
+    else:
+        return auc_roc, epoch_stop
 
 criterion = nn.BCEWithLogitsLoss()  # Binary Cross Entropy with built-in sigmoid
+
 ### OBJECTIVE FUNCTION FOR HYPEROPT PARAMETER TUNING ###################################################################
 
 # Define classifier type
@@ -578,9 +618,8 @@ def objective(params):
                 es_handler = EarlyStopping(patience=patience, delta=delta, verbose=False)
             else:
                 es_handler = None
-
-            # Train and get AUROC score
-            roc, epoch_stop = train_model(model, train_loader_hp, val_loader_hp, es_handler, optimiser,  verbose=False)
+            # Train and get AUROC score #IMPROVE stores returned training and validation loss but these aren't used elsewhere - training function needs tidying
+            roc, epoch_stop, tl, vl = train_model(model, train_loader_hp, val_loader_hp, es_handler=None, optimiser=optimiser, verbose=False)
             roc_scores.append(roc)
 
         # Evaluate the model after CV with AUROC
@@ -675,7 +714,6 @@ search_space = {
     'lr': hp.loguniform('lr', np.log(1e-4), np.log(0.1)),
     'optimiser': hp.choice('optimiser', ['SGD', 'Adam', 'RMSprop', 'Adagrad', 'Adamax', 'Nadam']),
     'batch_size': hp.choice('batch_size', [64, 48, 32]),
-    'epochs': hp.quniform('epochs', 10, 1000, 30),
 
     # Activation
     'activation': hp.choice('activation', ['relu', 'leaky_relu', 'mish', 'sigmoid', 'softplus', 'softsign',
@@ -695,7 +733,7 @@ fixed_search_space = {
     'lr': 5e-4,
     'optimiser': 'Adam',
     'batch_size': 32,
-    'epochs': 300,
+    # 'epochs': 300, # Removed epochs term from search space, but despite being probably too high this had good results
     'activation': 'mish',
     'fs_params': selector_param_spaces[selector_type]
 }
@@ -800,35 +838,7 @@ class O2Classifier(nn.Module):
         x = self.act(self.fc3(x))
         return self.fc4(x).squeeze(1)
 
-### EARLY STOPPING #####################################################################################################
-# Basic setup for early stopping criteria
-patience = 5  # Epochs to wait after no improvement
-delta = 0.01  # Minimum change in the loss
-best_val_loss = float("inf")  # Best validation loss to compare against
-no_improvement_count = 0 # Count epochs since improvement
-
-# Define class
-class EarlyStopping:
-    def __init__(self, patience=5, delta=0.0, verbose=False):
-        self.patience = patience
-        self.delta = delta
-        self.verbose = verbose
-        self.best_loss = None
-        self.no_improvement_count = 0
-        self.stop_training = False
-
-    def check_early_stop(self, val_loss):
-        if self.best_loss is None or val_loss < self.best_loss - self.delta:  #If loss is improving
-            self.best_loss = val_loss
-            self.no_improvement_count = 0
-        else: # Track duration without improvement and trigger break
-            self.no_improvement_count += 1
-            if self.no_improvement_count >= self.patience:
-                self.stop_training = True
-                if self.verbose:
-                    print("Stopping early as no improvement has been observed.")
-
-### TRAIN FINAL MODEL ##################################################################################################
+### TRAIN FINAL MODEL IN MLFLOW ########################################################################################
 #todo many parts were deleted from TML framework, so copy in later
 # todo edit code comment blocks/move around
 
@@ -921,7 +931,7 @@ with mlflow.start_run(run_name=run_name) as run:
     print(f"Feature dimensions: {X_train.shape[1]} | Classes: {len(np.unique(y_train))}")
 
     ### CROSS-VALIDATE #################################################################################################
-    # Call function to train model
+    # Call function to train model # WARNING this is technically a different model to the final model - worth keeping?
     kfold = StratifiedKFold(n_splits=3, shuffle=True, random_state=42) # Set to three due to small dataset sizes
     roc_scores = []
     stopping_epochs = [] # best epochs per fold
@@ -962,8 +972,8 @@ with mlflow.start_run(run_name=run_name) as run:
         else:
             es_handler = None
 
-        # Train and get AUROC score
-        roc, epoch_stop = train_model(model, train_loader_fold, val_loader_fold, es_handler, optimiser, verbose=False)
+        # Train and get AUROC score/losses for training curve
+        roc, epoch_stop, train_loss_list, val_loss_list = train_model(model, train_loader_fold, val_loader_fold, es_handler, optimiser, verbose=False)
         print(f"Fold {fold + 1} AUROC Score: {roc:.4f}\n")
         mlflow.log_metric(f"CV/Fold {fold + 1} AUROC Score", roc)
         roc_scores.append(roc)
@@ -988,8 +998,8 @@ with mlflow.start_run(run_name=run_name) as run:
     optimiser = torch.optim.Adam(final_model.parameters(), lr=5e-4)  # Updates the model’s parameters to minimize the loss function
 
     # Train final model for the average best epoch count (no early stopping needed)
-    print(f"\nNow training final model with {avg_best_epoch} epochs.\n") #TODO no longer accurate if hyperopt
-    n_epochs = avg_best_epoch  # Set to average best epoch
+    print(f"\nNow training final model with {avg_best_epoch} epochs.\n")
+    n_epochs = avg_best_epoch  # Set to average best epoch #Improve this feeds into train_model but should be fed into function, not set in script
     train_model(final_model, train_full_loader, None, es_handler=None, optimiser=optimiser, verbose=True)
 
     # Save input features for validation - JSON (human-readable) and joblib
@@ -1099,7 +1109,7 @@ with mlflow.start_run(run_name=run_name) as run:
     # Calculate metrics
     test_accuracy = accuracy_score(y_test, y_pred)
     test_f1 = f1_score(y_test, y_pred)
-    test_roc_auc = roc_auc_score(y_test, y_proba)
+    test_roc = roc_auc_score(y_test, y_proba)
     tn, fp, fn, tp = cm.ravel()
     sensitivity = tp / (tp + fn) # aka TPR, recall
     specificity = tn / (tn + fp) # aka TNR
@@ -1111,8 +1121,8 @@ with mlflow.start_run(run_name=run_name) as run:
     mlflow.log_metric("test_accuracy", test_accuracy)
     print(f"Test F1 with best model: {test_f1:.4f}")
     mlflow.log_metric("test_f1", test_f1)
-    print(f"Test AUROC with best model: {test_roc_auc:.4f}\n")
-    mlflow.log_metric("test_roc", test_roc_auc)
+    print(f"Test AUROC with best model: {test_roc:.4f}\n")
+    mlflow.log_metric("test_roc", test_roc)
     mlflow.log_metric("sensitivity-tpr-recall", sensitivity)
     mlflow.log_metric("specificity-tnr", specificity)
     mlflow.log_metric("precision-ppv", precision)
@@ -1150,7 +1160,7 @@ with mlflow.start_run(run_name=run_name) as run:
         results_combined.to_csv(ML_prediction_path)
         shutil.copy2(ML_prediction_path, NN_prediction_path)  # Copy back to NN results
 
-    # TODO 'GRAPHS' section needs to be adapted from TML to here (might need diff functions) - as well as check over whole script again
+    # TODO check over model_building for TML to see if anything extra is missed from here - and vice versa
     ### GRAPHS #############################################################################################################
     # Plot PCA on the combined dataset - i.e. original data after feature selection
     with mlflow.start_run(nested=True):  # Start another run to avoid auologging conflicts
@@ -1162,6 +1172,29 @@ with mlflow.start_run(run_name=run_name) as run:
 
         # Call function to plot PCA on the dataset prior to feature selection
         pca_original(X_full, selected_features, y_full, graphs_dir)
+
+    # Plot learning curve
+    plt.plot(train_loss_list, label='Training Loss')
+    plt.plot(val_loss_list, label='Validation Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss (BCE with logits)')
+    plt.legend()
+    plt.savefig(f'{graphs_dir}/loss_curve.png', dpi=300, bbox_inches='tight')
+
+    # Plot ROC curve
+    plot_roc_auc(y_proba, y_test, graphs_dir)
+
+    # SHAP
+    # todo
+
+    # Plot precision-recall curve
+    plot_precision_recall(y_proba, y_test, graphs_dir)
+
+    # Plot calibration curve
+    plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir)
+
+    # Plot decision distribution
+    plot_decision_distribution(y_proba, y_test, graphs_dir)
 
     ### Plot PCA on final predictions - Test data
     with mlflow.start_run(nested=True):  # Start another run to avoid autologging conflicts
@@ -1176,7 +1209,6 @@ with mlflow.start_run(run_name=run_name) as run:
     # Log artifacts
     mlflow.log_artifacts(graphs_dir, artifact_path="graphs")
     mlflow.log_artifacts(output_data_dir, artifact_path="tables")
-
 
     ### SAVE DATA FOR ADDITIONAL GRAPHS ################################################################################
     y_pred_df = pd.DataFrame(y_pred, index=y_test.index) #todo check index is correct
@@ -1213,6 +1245,37 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     # # Make note of the corresponding hyperopt MLflow run
     hyper_run_file = final_folder / "hyperopt_run_name.txt"
     hyper_run_file.write_text(f"{hyperopt_name}")
+
+    # Save key metrics to csv # Note: When scripts are run as standalone, run_name will change between ML and NN even if config is the same. Run using the wrapper script to present together.
+    key_metrics_path = f"key_metrics_{run_name}.csv"
+    key_metrics = {
+        'NN Test Accuracy': test_accuracy,
+        'NN Test F1': test_f1,
+        'NN Test AUROC': test_roc,
+    }
+    # Either update the existing key metrics, or create a new file
+    if os.path.exists(key_metrics_path):
+        existing_metrics = pd.read_csv(key_metrics_path, index_col=0)
+        for key, value in key_metrics.items():
+            existing_metrics[key] = value
+        existing_metrics.to_csv(key_metrics_path)
+        key_metrics_df = existing_metrics
+    else:
+        key_metrics_df = pd.DataFrame({k: [v] for k, v in key_metrics.items()}, index=[run_name])
+        key_metrics_df.to_csv(f"{output_folder}/{key_metrics_path}")
+
+    # Save to masterlist of metrics
+    all_key_metrics_path = "key_metrics.csv"
+    if os.path.exists(all_key_metrics_path):
+        all_metrics = pd.read_csv(all_key_metrics_path, index_col=0)
+        # Drop existing row if present
+        all_metrics.drop(index=run_name, errors='ignore', inplace=True)
+        # Update
+        if run_name not in all_metrics.index:
+            all_metrics = pd.concat([all_metrics, key_metrics_df])
+    else:
+        all_metrics = key_metrics_df
+    all_metrics.to_csv(all_key_metrics_path)
 
 # Print run ids
 # print(store_hyp_id) #todo commented out while hyperopt isn't set up

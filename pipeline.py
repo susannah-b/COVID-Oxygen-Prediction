@@ -68,7 +68,7 @@ if build_NN:
 config["general"]["run_number"] = run_number + 1 # Update run number for next run
 with open(config_path, "w") as f:
     yaml.dump(config, f, sort_keys=False)
-# WARNING temporarily commented to test NN
+
 ### RUN PRELIMINARY SCRIPTS #############################################################################################
 # Run feature_engineering.py - this script takes the initial data and cleans/engineers features to prepare for the
   # preprocessing required for model construction.
@@ -78,13 +78,13 @@ if process.returncode != 0:
     print("Warning: feature_engineering.py failed")
     exit(1)
 
-# # Run data_preprocessing.py - this script splits, normalises, encodes, and imputes the data to prepare the datasets for
-# # model building.
-# process = subprocess.run(['python', 'data_preprocessing.py', '--run_name', run_name, '--from_pipeline'],text=True)
-# # Check if failed
-# if process.returncode != 0:
-#     print("Warning: data_preprocessing.py failed")
-#     exit(1)
+# Run data_preprocessing.py - this script splits, normalises, encodes, and imputes the data to prepare the datasets for
+# model building.
+process = subprocess.run(['python', 'data_preprocessing.py', '--run_name', run_name, '--from_pipeline'],text=True)
+# Check if failed
+if process.returncode != 0:
+    print("Warning: data_preprocessing.py failed")
+    exit(1)
 
 ### MOVE FILES TO RELEVANT MODEL FOLDER ################################################################################
 # In order to use the exact same data for preliminary vs ML models, the data needs to be copied into the relevant folder

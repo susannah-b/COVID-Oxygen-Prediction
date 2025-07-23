@@ -657,7 +657,7 @@ def plot_learning_curve(final_pipeline, X_train, y_train, graphs_dir):
         train_scores=train_scores,
         test_scores=val_scores
     ).plot(ax=ax)
-    ax.set_ylabel("Accuracy Score") # WARNING had this as F1 - might in fact be accuracy
+    ax.set_ylabel("Accuracy Score")
     ax.set_title("Learning Curve")
 
     # Save the plot
@@ -821,77 +821,49 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
             print(f"Unable to calculate feature importance.\n{e}")
 
 # Plot calibration curve
-def plot_calibration_curve(final_pipeline, X_test, y_test, classifier_type, graphs_dir):
+def plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir):
     try:
-        # Check if model supports probability estimates
-        if hasattr(final_pipeline, 'predict_proba'):
-            # Get predicted probabilities for the positive class
-            prob_pos = final_pipeline.predict_proba(X_test)[:, 1]
+        # Compute calibration curve and Brier score
+        brier_score = brier_score_loss(y_test, y_proba)
 
-            # Compute calibration curve and Brier score
-            fraction_of_positives, mean_predicted_value = calibration_curve(
-                y_test, prob_pos, n_bins=10, strategy='quantile'
-            )
-            brier_score = brier_score_loss(y_test, prob_pos)
+        # Plot calibration curve
+        fig, ax = plt.subplots(figsize=(10, 8))
+        CalibrationDisplay.from_predictions(
+            y_test,
+            y_proba,
+            n_bins=10,
+            strategy='quantile',
+            ax=ax,
+            name=f"{classifier_type} (Brier: {brier_score:.3f})"
+        )
+        ax.set_title(f"Calibration Curve")
+        ax.set_xlabel("Mean Predicted Probability")
+        ax.set_ylabel("Fraction of Positives")
+        ax.grid(True)
+        plt.savefig(f"{graphs_dir}/calibration_curve.png", dpi=300, bbox_inches='tight')
+        plt.close(fig)
 
-            # Plot calibration curve
-            fig, ax = plt.subplots(figsize=(10, 8))
-            CalibrationDisplay.from_predictions(
-                y_test,
-                prob_pos,
-                n_bins=10,
-                strategy='quantile',
-                ax=ax,
-                name=f"{classifier_type} (Brier: {brier_score:.3f})"
-            )
-            ax.set_title(f"Calibration Curve")
-            ax.set_xlabel("Mean Predicted Probability")
-            ax.set_ylabel("Fraction of Positives")
-            ax.grid(True)
-            plt.savefig(f"{graphs_dir}/calibration_curve.png", dpi=300, bbox_inches='tight')
-            plt.close(fig)
-
-            # Log Brier score
-            mlflow.log_metric("brier_score", brier_score)
-
-        # For models without predict_proba but with decision_function (like SVM)
-        elif hasattr(final_pipeline, 'decision_function'):
-            # Get decision scores and scale to [0,1]
-            decision_scores = final_pipeline.decision_function(X_test)
-            prob_pos = (decision_scores - decision_scores.min()) / (decision_scores.max() - decision_scores.min())
-
-            # Compute calibration curve and Brier score
-            fraction_of_positives, mean_predicted_value = calibration_curve(
-                y_test, prob_pos, n_bins=10, strategy='quantile'
-            )
-            brier_score = brier_score_loss(y_test, prob_pos)
-
-            # Plot calibration curve
-            fig, ax = plt.subplots(figsize=(10, 8))
-            CalibrationDisplay.from_predictions(
-                y_test,
-                prob_pos,
-                n_bins=10,
-                strategy='quantile',
-                ax=ax,
-                name=f"{classifier_type} (scaled scores, Brier: {brier_score:.3f})"
-            )
-            ax.set_title(f"Calibration Curve (Scaled Decision Scores)")
-            ax.set_xlabel("Mean Scaled Decision Score")
-            ax.set_ylabel("Fraction of Positives")
-            ax.grid(True)
-            plt.savefig(f"{graphs_dir}/calibration_curve.png", dpi=300, bbox_inches='tight')
-            plt.close(fig)
-
-            # Log Brier score
-            mlflow.log_metric("brier_score", brier_score)
-            print(f"Calibration curve (scaled scores) and Brier score ({brier_score:.3f}) saved successfully.")
-
-        else:
-            print("Model doesn't support probability estimates or decision scores - skipping calibration curve")
+        # Log Brier score
+        mlflow.log_metric("brier_score", brier_score)
 
     except Exception as e:
         print(f"Error generating calibration curve: {str(e)}")
+
+def plot_decision_distribution(y_proba, y_test, graphs_dir):
+    plt.figure(figsize=(10, 6))
+    sns.histplot(
+        data=pd.DataFrame({
+            'Probability': y_proba,
+            'Actual': y_test.replace({0: 'No O2', 1: 'O2 Needed'})
+        }),
+        x='Probability',
+        hue='Actual',
+        element='step',
+        stat='density',
+        common_norm=False,
+        bins=20
+    )
+    plt.savefig(f'{graphs_dir}/prediction_distribution.png')
 
 # Plot decision tree for tree-based models
 def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, data_dir, graphs_dir):
@@ -988,17 +960,8 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
             print(f"Error plotting decision tree: {str(e)}")
 
 # Plot precision-recall curve
-def plot_precision_recall(final_pipeline, X_test, y_test, graphs_dir):
+def plot_precision_recall(y_proba, y_test, graphs_dir):
     try:
-        # Get prediction probabilities
-        if hasattr(final_pipeline, 'predict_proba'):
-            y_proba = final_pipeline.predict_proba(X_test)[:, 1]
-        elif hasattr(final_pipeline, 'decision_function'): # For models that use decision_function instead of predict_proba
-            decision_scores = final_pipeline.decision_function(X_test)
-            y_proba = (decision_scores - decision_scores.min()) / (decision_scores.max() - decision_scores.min())
-        else:
-            raise RuntimeError("Model doesn't support probability estimates")
-
         # Compute Precision-Recall curve
         precision, recall, _ = precision_recall_curve(y_test, y_proba)
         average_precision = average_precision_score(y_test, y_proba)
@@ -1106,8 +1069,3 @@ def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):
     plt.close()
 
 ### NEURAL NETWORKS ####################################################################################################
-# IMPROVE: Some of these functions are very similar to traditional ML functions above with small changes made so they'll
-#  run. Ideally combine into one more elegant function.
-
-
-

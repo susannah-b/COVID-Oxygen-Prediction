@@ -37,7 +37,7 @@ from statsmodels.stats.outliers_influence import variance_inflation_factor
 import warnings
 from functions import basic_train, IntToFloatTransformer, port_in_use, pca_original, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
-    plot_pca_predicted, plot_confusion_matrix, plot_fs_performance
+    plot_pca_predicted, plot_confusion_matrix, plot_fs_performance, plot_decision_distribution
 import re
 import os
 from datetime import datetime
@@ -933,6 +933,10 @@ with mlflow.start_run(run_name=run_name) as run:
     signature = infer_signature(X_train, final_pipeline.predict(X_train))
     mlflow.sklearn.log_model(final_pipeline, "best_model", signature=signature, input_example=input_example)
 
+    # Evaluate the final model on the test set
+    y_pred = final_pipeline.predict(X_test)
+    y_proba = final_pipeline.predict_proba(X_test)[:, 1]
+
     # Print confusion matrix
     cm = confusion_matrix(y_test, y_pred)
     print("Confusion Matrix:\n", cm)
@@ -940,9 +944,7 @@ with mlflow.start_run(run_name=run_name) as run:
     # Save confusion matrix
     plot_confusion_matrix(cm, graphs_dir)
 
-    # Evaluate the final model on the test set
-    y_pred = final_pipeline.predict(X_test)
-    y_proba = final_pipeline.predict_proba(X_test)[:, 1]
+    # Calculate metrics
     test_accuracy = accuracy_score(y_test, y_pred)
     test_f1 = f1_score(y_test, y_pred)
     test_roc = roc_auc_score(y_test, y_proba)
@@ -996,14 +998,17 @@ with mlflow.start_run(run_name=run_name) as run:
                             X_test, y_test)
 
     # Plot calibration curve
-    plot_calibration_curve(final_pipeline, X_test, y_test, classifier_type, graphs_dir)
+    plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir)
+
+    # Plot decision distribution
+    plot_decision_distribution(y_proba, y_test, graphs_dir)
 
     # Plot decision tree
     class_names = np.array(['No_Oxygen_Need', 'Oxygen_Need'])
     plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, output_data_dir, graphs_dir)
 
     # Plot a precision-recall curve
-    plot_precision_recall(final_pipeline, X_test, y_test, graphs_dir)
+    plot_precision_recall(y_proba, y_test, graphs_dir)
 
     ### Plot PCA on final predictions - Test data
     with mlflow.start_run(nested=True):  # Start another run to avoid autologging conflicts
@@ -1055,6 +1060,30 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     # Make note of the corresponding hyperopt MLflow run
     hyper_run_file = final_folder / "hyperopt_run_name.txt"
     hyper_run_file.write_text(f"{hyperopt_name}")
+
+    # Save key metrics to csv
+    key_metrics_path = f"key_metrics_{run_name}.csv"
+    key_metrics = {
+        'ML Test Accuracy': test_accuracy,
+        'ML Test F1': test_f1,
+        'ML Test AUROC': test_roc,
+             }
+    key_metrics_df = pd.DataFrame({k: [v] for k, v in key_metrics.items()}, index=[run_name])
+    key_metrics_df.to_csv(f"{output_folder}/{key_metrics_path}")
+
+    # Save to masterlist of metrics
+    all_key_metrics_path = "key_metrics.csv"
+    if os.path.exists(all_key_metrics_path):
+        all_metrics = pd.read_csv(all_key_metrics_path, index_col=0)
+        # Drop existing row if present
+        all_metrics.drop(index=run_name, errors='ignore', inplace=True)
+        # Update
+        if run_name not in all_metrics.index:
+            all_metrics = pd.concat([all_metrics, key_metrics_df])
+    else:
+        all_metrics = key_metrics_df
+    all_metrics.to_csv(all_key_metrics_path)
+
 
 # Print run ids
 print(store_hyp_id)
