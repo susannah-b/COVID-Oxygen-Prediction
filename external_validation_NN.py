@@ -148,7 +148,7 @@ mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "47_0720-234508_cross_validation_ES" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "107_0723-125036_graphs" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
@@ -169,8 +169,6 @@ selected_features = joblib.load(features_path_2)
 mlflow.set_experiment("Oxygen Prediction - Validation")
 
 ### PREPARE DATA #######################################################################################################
-print(len(input_features))
-print(len(X_data.columns))
 # Filter validation data to the original features
 X_data = X_data[input_features]
 # Ensure same column order
@@ -181,14 +179,9 @@ mlflow.pytorch.autolog()
 # Set run name - OG model with _validation appended
 val_run_name = f"{model_name}_validation"
 
-# Get classifier type #todo not yet implemented for NN - do after basic training
-# classifier_path = Path(f"{model_output}/params/type")
-# with open(classifier_path, 'r') as f:
-#     classifier_type = f.read().strip()
-
 # Start MLflow run
 with mlflow.start_run(run_name=val_run_name) as run:
-    print(f"Now predicting oxygen need for the validation data using the neural network model.") # todo {classifier_type} post b_t
+    print(f"\nNow predicting oxygen need for the validation data using the neural network model.") # todo {classifier_type} post b_t
     mlflow.set_tag("Run name", val_run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
     mlflow.set_tag("Phase", "Model validation")
     # mlflow.set_tag("Hyperopt MLflow run", hyperopt_name) # Note: haven't included the associated hyperopt selection run for OG model but could be determined if useful
@@ -199,11 +192,6 @@ with mlflow.start_run(run_name=val_run_name) as run:
     y_proba = model.predict(X_data)
     predictions = (y_proba > 0.5).astype(int)
 
-    # Get prediction metrics
-    test_accuracy = accuracy_score(y_data, predictions)
-    test_f1 = f1_score(y_data, predictions)
-    test_roc_auc = roc_auc_score(y_data, y_proba)
-
     # Print confusion matrix
     cm = confusion_matrix(y_data, predictions)
     print("Confusion Matrix:\n", cm)
@@ -211,9 +199,27 @@ with mlflow.start_run(run_name=val_run_name) as run:
     # Save confusion matrix
     plot_confusion_matrix(cm, graphs_dir)
 
+    # Get prediction metrics
+    test_accuracy = accuracy_score(y_data, predictions)
+    test_f1 = f1_score(y_data, predictions)
+    test_roc_auc = roc_auc_score(y_data, y_proba)
+    tn, fp, fn, tp = cm.ravel()
+    sensitivity = tp / (tp + fn) # aka TPR, recall
+    specificity = tn / (tn + fp) # aka TNR
+    precision = tp / (tp + fp) # aka PPV
+    npv = tn / (tn + fn)
+
+    # Print and log metrics
     print(f"\nValidation accuracy: {test_accuracy:.4f}")
+    mlflow.log_metric("test_accuracy", test_accuracy)
     print(f"Validation F1 score: {test_f1:.4f}")
+    mlflow.log_metric("test_f1", test_f1)
     print(f"Validation ROC_AUC: {test_roc_auc:.4f}")
+    mlflow.log_metric("test_roc", test_roc_auc)
+    mlflow.log_metric("sensitivity-tpr-recall", sensitivity)
+    mlflow.log_metric("specificity-tnr", specificity)
+    mlflow.log_metric("precision-ppv", precision)
+    mlflow.log_metric("npv", npv)
 
     # Classification report
     print("\nClassification Report:")
@@ -249,8 +255,65 @@ with mlflow.start_run(run_name=val_run_name) as run:
     #TODO as with regular NN, need to adapt /make required graphs
 
     #TODO pca is commented - works for NN on test (and normal ML) but failing with NN validation - fix later
+    ### GRAPHS #############################################################################################################
     # Plot PCA on the combined dataset - i.e. original data after feature selection #todo for all pcas, check a few samples to confirm they're correct (label on graph)
-    # with mlflow.start_run(nested=True):  # Start another run to avoid auologging conflicts
-    #     mlflow.pytorch.autolog(disable=True)  # Disables autolog inside this run
-    #     # Call function to plot PCA on the dataset prior to feature selection
-    #     pca_original(X_data, input_features, y_data, graphs_dir)
+    with mlflow.start_run(nested=True):  # Start another run to avoid auologging conflicts
+        mlflow.pytorch.autolog(disable=True)  # Disables autolog inside this run
+        # Call function to plot PCA on the dataset prior to feature selection
+        # pca_original(X_data, input_features, y_data, graphs_dir) #todo fix for NN
+
+    # Plot ROC/AUC curves
+    plot_roc_auc(y_proba, y_data, graphs_dir)
+
+    # Plot feature importance
+    classifier_type = 'neural_network'
+    # plot_feature_importance(classifier_type, model, selected_features, graphs_dir, output_data_dir, model.get_params(),
+    #                         X_data, y_data) #todo remove/fix this for NN
+
+    # # Plot calibration curve
+    # plot_calibration_curve(model, X_data, y_data, classifier_type, graphs_dir) #todo remove/fix this for NN
+
+    # Plot a precision-recall curve
+    plot_precision_recall(model, X_data, y_data, graphs_dir)
+
+    ### Plot PCA on final predictions - Test data
+    with mlflow.start_run(nested=True):  # Start another run to avoid autologging conflicts
+        mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
+
+        # Plot PCA
+        # plot_pca_predicted(X_data, selected_features, y_data, graphs_dir, predictions) # todo fix for NN
+
+    # Print run id
+    val_run_id = run.info.run_id
+    store_val_id = f"Run {val_run_name} for validation predictions completed. Run ID is {val_run_id}"
+
+    # Log artifacts
+    mlflow.log_artifacts(graphs_dir, artifact_path="val_graphs")
+    mlflow.log_artifacts(data_dir, artifact_path="val_tables")
+
+### STORE RESULTS IN NEW FOLDER ########################################################################################
+# Move and rename runs to a new directory for easier examination - results are copied from the MLflow tracking folder
+# (which is also available in the server) but renamed here for easier access based on the original model name.
+# Bool to set whether to copy the runs to the final output subdirectory - for testing only this can be disabled
+if track_final: #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful
+    print(f"\'track_final\' has been enabled, so the model information will be copied to ./model_output/ML under the original experiment {model_name} for easier viewing.")
+
+    # Determine file locations
+    val_folder = Path("mlruns")  / val_exp_id / val_run_id
+    ml_artifacts = Path("mlartifacts") / val_exp_id / val_run_id # Find artifacts for current run
+    output_folder = Path(f"{model_output}/external_validation") # Put within original model folder under external_validation
+    output_artifacts = output_folder
+    data_folder = Path(data_dir)
+    graph_folder = Path(graphs_dir)
+
+    # Copy final model folder contents
+    shutil.copytree(val_folder, output_folder, dirs_exist_ok=True)
+    # Copy validation model artifacts from mlartifacts to the model_output external validation file
+        #  Note: since setting an experiment name changes the artifacts location to mlartifacts instead of in the mlruns (run) folder, we will copy it over for our final output
+    shutil.copytree(ml_artifacts, output_artifacts, dirs_exist_ok=True)
+    # Copy training data and graphs folder
+    shutil.copytree(data_folder, output_folder / data_dir, dirs_exist_ok=True)
+    shutil.copytree(graph_folder, output_folder / graphs_dir, dirs_exist_ok=True)
+
+# Print run ids
+print(store_val_id)

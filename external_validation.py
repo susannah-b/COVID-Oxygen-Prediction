@@ -19,6 +19,9 @@ import os
 from functions import port_in_use, pca_original, plot_roc_auc, plot_feature_importance, plot_calibration_curve, \
     plot_decision_tree, plot_precision_recall, plot_pca_predicted, plot_confusion_matrix
 
+# Set global random seeds
+np.random.seed(42)
+
 ### ARGPARSE TO SET RUN NAME ###########################################################################################
   # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
 parser = argparse.ArgumentParser()
@@ -52,8 +55,6 @@ with open(config_path, "r") as f:
 host = config['general']['host']
 port = config['general']['port']
 track_final = config['model_building']['track_final']
-
-np.random.seed(42)
 
 ### LOAD ISARIC DATA ###################################################################################################
 # Set input directories
@@ -137,7 +138,7 @@ with open(classifier_path, 'r') as f:
 
 # Start MLflow run
 with mlflow.start_run(run_name=val_run_name) as run:
-    print(f"Now predicting oxygen need for the validation data using the {classifier_type} model.")
+    print(f"\nNow predicting oxygen need for the validation data using the {classifier_type} model.")
     mlflow.set_tag("Run name", val_run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
     mlflow.set_tag("Phase", "Model validation")
     # mlflow.set_tag("Hyperopt MLflow run", hyperopt_name) # Note: haven't included the associated hyperopt selection run for OG model but could be determined if useful
@@ -148,11 +149,6 @@ with mlflow.start_run(run_name=val_run_name) as run:
     predictions = model.predict(X_data)
     y_proba = model.predict_proba(X_data)[:, 1]
 
-    # Get prediction metrics
-    test_accuracy = accuracy_score(y_data, predictions)
-    test_f1 = f1_score(y_data, predictions)
-    test_roc = roc_auc_score(y_data, y_proba)
-
     # Print confusion matrix
     cm = confusion_matrix(y_data, predictions)
     print("Confusion Matrix:\n", cm)
@@ -160,9 +156,28 @@ with mlflow.start_run(run_name=val_run_name) as run:
     # Save confusion matrix
     plot_confusion_matrix(cm, graphs_dir)
 
+    # Get prediction metrics
+    test_accuracy = accuracy_score(y_data, predictions)
+    test_f1 = f1_score(y_data, predictions)
+    test_roc = roc_auc_score(y_data, y_proba)
+    test_roc_auc = roc_auc_score(y_data, y_proba)
+    tn, fp, fn, tp = cm.ravel()
+    sensitivity = tp / (tp + fn)  # aka TPR, recall
+    specificity = tn / (tn + fp)  # aka TNR
+    precision = tp / (tp + fp)  # aka PPV
+    npv = tn / (tn + fn)
+
+    # Print and log metrics
     print(f"\nValidation accuracy: {test_accuracy:.4f}")
+    mlflow.log_metric("test_accuracy", test_accuracy)
     print(f"Validation F1 score: {test_f1:.4f}")
-    print(f"Validation AUROC score: {test_roc:.4f}")
+    mlflow.log_metric("test_f1", test_f1)
+    print(f"Validation ROC_AUC: {test_roc_auc:.4f}")
+    mlflow.log_metric("test_roc", test_roc_auc)
+    mlflow.log_metric("sensitivity-tpr-recall", sensitivity)
+    mlflow.log_metric("specificity-tnr", specificity)
+    mlflow.log_metric("precision-ppv", precision)
+    mlflow.log_metric("npv", npv)
 
 
     # Save predictions to csv
@@ -177,7 +192,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
         pca_original(X_data, input_features, y_data, graphs_dir)
 
     # Plot ROC/AUC curves
-    plot_roc_auc(model, X_data, y_data, graphs_dir)
+    plot_roc_auc(y_proba, y_data, graphs_dir)
 
     # Plot feature importance
     plot_feature_importance(classifier_type, model, selected_features, graphs_dir, output_data_dir, model.get_params(),
@@ -205,8 +220,8 @@ with mlflow.start_run(run_name=val_run_name) as run:
     store_val_id = f"Run {val_run_name} for validation predictions completed. Run ID is {val_run_id}"
 
     # Log artifacts
-    mlflow.log_artifacts(graphs_dir, artifact_path="graphs")
-    mlflow.log_artifacts(data_dir, artifact_path="tables")
+    mlflow.log_artifacts(graphs_dir, artifact_path="val_graphs")
+    mlflow.log_artifacts(data_dir, artifact_path="val_tables")
 
 ### STORE RESULTS IN NEW FOLDER ########################################################################################
 # Move and rename runs to a new directory for easier examination - results are copied from the MLflow tracking folder

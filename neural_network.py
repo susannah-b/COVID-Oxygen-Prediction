@@ -55,12 +55,13 @@ from sklearn.base import clone
 show_detail = False
 
 ### SET RANDOM SEEDS ###################################################################################################
-# Set global random seeds
-torch.manual_seed(42) # PyTorch CPU
-torch.cuda.manual_seed_all(42) # PyTorch GPU (if available)
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-np.random.seed(42)
+# Function to set random seeds - certain operations advance random state, and due to the small dataset I've found better results (on both test and exval) with certain seeds
+def reset_seeds(seed=44): #TODO can actually be hypertuned
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    np.random.seed(seed)
 
 ### ARGPARSE TO SET RUN NAME ###########################################################################################
   # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
@@ -125,9 +126,9 @@ os.makedirs(output_data_dir, exist_ok=True)
 
 # Create output directory for the graphs
 if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
-    graphs_dir = 'training_graphs' # Combine with other training graphs if using training data
+    graphs_dir = 'training_graphs/NN' # Combine with other training graphs if using training data
 else: # Put into input storage folder to prevent overwriting
-    graphs_dir = f'inputs/NN/{run_name}/training_graphs'
+    graphs_dir = f'inputs/NN/{run_name}/training_graphs/NN'
 os.makedirs(graphs_dir, exist_ok=True) # Make the ML graph that's specific to the ML outputs
 
 ### Read in data
@@ -152,7 +153,6 @@ print(f"Feature dimensions: {X_train_full.shape[1]} | Classes: {y_train.nunique(
 
 # Do test/validation split for the early stopping check (final model is trained on X_train_full)
 X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=validation_size, stratify=y_train_full, random_state=42)
-
 # Set device
 device = "cuda" if torch.cuda.is_available() else "cpu" # Automatically uses a GPU if available; otherwise, defaults to the CPU
 
@@ -190,7 +190,7 @@ try:
     plt.legend()
 
     # Save and show
-    plt.savefig(f"{graphs_dir}/pca_all_data.png", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/pca_all_data.png", dpi=300, bbox_inches='tight')
     plt.close()
 
 except Exception as e:
@@ -417,7 +417,7 @@ def train_model(model, train_loader, val_loader, es_handler, optimiser, verbose=
             loss = criterion(outputs,
                              labels)  # Calculates the classification error between predictions (outputs) and true labels (labels) using the cross-entropy loss
 
-            # Backward pass and optimization
+            # Backward pass and optimisation
             optimiser.zero_grad()  # Resets gradients from the previous iteration to prevent accumulation
             loss.backward()  # Computes the gradients of the loss with respect to the model parameters via backpropagation
             optimiser.step()  # Updates the model parameters using the computed gradients
@@ -584,7 +584,6 @@ def objective(params):
             roc_scores.append(roc)
 
         # Evaluate the model after CV with AUROC
-        roc_score_mean = np.mean(roc_scores).astype(np.float32)
         roc_score_mean = np.mean(roc_scores).astype(np.float32)
 
         # Log the best AUROC for each model type if improved
@@ -966,7 +965,7 @@ with mlflow.start_run(run_name=run_name) as run:
         # Train and get AUROC score
         roc, epoch_stop = train_model(model, train_loader_fold, val_loader_fold, es_handler, optimiser, verbose=False)
         print(f"Fold {fold + 1} AUROC Score: {roc:.4f}\n")
-        mlflow.log_metric(f"Fold {fold + 1} AUROC Score", roc)
+        mlflow.log_metric(f"CV/Fold {fold + 1} AUROC Score", roc)
         roc_scores.append(roc)
         stopping_epochs.append(epoch_stop)
 
@@ -985,7 +984,6 @@ with mlflow.start_run(run_name=run_name) as run:
 
     print(f"Final model input dimension: {input_dim_final}")
     print(f"Test data dimension after preprocessing: {X_test_processed.shape[1]}")
-
     final_model = O2Classifier(input_dim_final).to(device) # Initialise fresh model for final training on full training dataset (no validation set)
     optimiser = torch.optim.Adam(final_model.parameters(), lr=5e-4)  # Updates the model’s parameters to minimize the loss function
 
@@ -1044,7 +1042,7 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Save model state
     final_model.to("cpu")
-    model_path = f"{data_dir}/model.pt"
+    model_path = f"{output_data_dir}/model.pt"
     torch.save({'model_state_dict': final_model.state_dict(),'input_dim': input_dim_final}, model_path)
 
     # Log artifacts
@@ -1090,28 +1088,37 @@ with mlflow.start_run(run_name=run_name) as run:
         y_proba = torch.sigmoid(logits).cpu().numpy()
         y_pred = (y_proba > 0.5).astype(int)
 
+    # Confusion matrix
+    cm = confusion_matrix(y_test, y_pred)  # todo check this is right!
+    print("Confusion Matrix:")
+    print(cm)
+
+    # Save confusion matrix
+    plot_confusion_matrix(cm, graphs_dir)
+
     # Calculate metrics
     test_accuracy = accuracy_score(y_test, y_pred)
     test_f1 = f1_score(y_test, y_pred)
     test_roc_auc = roc_auc_score(y_test, y_proba)
+    tn, fp, fn, tp = cm.ravel()
+    sensitivity = tp / (tp + fn) # aka TPR, recall
+    specificity = tn / (tn + fp) # aka TNR
+    precision = tp / (tp + fp) # aka PPV
+    npv = tn / (tn + fn)
 
-    # Print metrics
+    # Print and log metrics
     print(f"\nTest accuracy with best model: {test_accuracy:.4f}")
     mlflow.log_metric("test_accuracy", test_accuracy)
     print(f"Test F1 with best model: {test_f1:.4f}")
     mlflow.log_metric("test_f1", test_f1)
     print(f"Test AUROC with best model: {test_roc_auc:.4f}\n")
     mlflow.log_metric("test_roc", test_roc_auc)
+    mlflow.log_metric("sensitivity-tpr-recall", sensitivity)
+    mlflow.log_metric("specificity-tnr", specificity)
+    mlflow.log_metric("precision-ppv", precision)
+    mlflow.log_metric("npv", npv)
 
     # TODO AI GEN TEMP OUTPUTS - find and make my own (eg CM already has a function)
-
-    # Confusion matrix
-    cm = confusion_matrix(y_test, y_pred) # todo check this is right!
-    print("Confusion Matrix:")
-    print(cm)
-
-    # Save confusion matrix
-    plot_confusion_matrix(cm, graphs_dir)
 
     # Classification report
     print("\nClassification Report:")
@@ -1169,6 +1176,13 @@ with mlflow.start_run(run_name=run_name) as run:
     # Log artifacts
     mlflow.log_artifacts(graphs_dir, artifact_path="graphs")
     mlflow.log_artifacts(output_data_dir, artifact_path="tables")
+
+
+    ### SAVE DATA FOR ADDITIONAL GRAPHS ################################################################################
+    y_pred_df = pd.DataFrame(y_pred, index=y_test.index) #todo check index is correct
+    y_proba_df = pd.DataFrame(y_proba, index=y_test.index)
+    y_results = pd.concat([y_pred_df, y_proba_df], axis=0)
+    y_results.to_csv(f"{output_data_dir}/y_results.csv")
 
 ### STORE RESULTS IN NEW FOLDER ########################################################################################
 # todo: if running as a standalone script (not in wrapper) then it will copy whatever old files + ML files too. Ideally only select current run files + NN

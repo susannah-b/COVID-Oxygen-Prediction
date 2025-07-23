@@ -274,7 +274,7 @@ def plot_class_distribution(merged, graphs_dir, dataset):
     plt.title(f'O2 requirement class distribution - {dataset} dataset')
     plt.xlabel('O2 required')
     plt.ylabel('Count')
-    plt.savefig(f'{graphs_dir}/class_distribution_{dataset}.png', dpi=200)
+    plt.savefig(f'{graphs_dir}/class_distribution_{dataset}.png', dpi=300)
 
 # Convert text-based comma-split columns to binary
 def text_to_binary(dataset, col_name, col_type, training_data, min_count):
@@ -595,7 +595,7 @@ def plot_confusion_matrix(cm, graphs_dir): #TODO ai-gen and untested - Can also 
             )
 
     fig.tight_layout()
-    fig.savefig(f"{graphs_dir}/confusion_matrix.png", dpi=150)
+    fig.savefig(f"{graphs_dir}/confusion_matrix.png", dpi=300)
     plt.close(fig)
 
 
@@ -637,7 +637,7 @@ def pca_original(X_full, selected_features, y_full, graphs_dir):
     plt.legend()
 
     # Save and show
-    plt.savefig(f"{graphs_dir}/pca_full_dataset_after_FS.png", dpi=150, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/pca_full_dataset_after_FS.png", dpi=300, bbox_inches='tight')
     plt.close()
 
 # Plot learning curve
@@ -661,17 +661,14 @@ def plot_learning_curve(final_pipeline, X_train, y_train, graphs_dir):
     ax.set_title("Learning Curve")
 
     # Save the plot
-    plt.savefig(f"{graphs_dir}/learning_curve.png", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/learning_curve.png", dpi=300, bbox_inches='tight')
 
     # Log the figure as an MLflow artifact
     mlflow.log_figure(fig, f"{graphs_dir}/learning_curve.png")
     plt.close(fig)
 
 # Plot ROC_AUC curve
-def plot_roc_auc(final_pipeline, X_test, y_test, graphs_dir):
-    # Get prediction probabilities
-    y_proba = final_pipeline.predict_proba(X_test)[:, 1]
-
+def plot_roc_auc(y_proba, y_test, graphs_dir):
     # Compute ROC curve and AUC
     fpr, tpr, _ = roc_curve(y_test, y_proba)
     roc_auc = auc(fpr, tpr)
@@ -683,11 +680,8 @@ def plot_roc_auc(final_pipeline, X_test, y_test, graphs_dir):
     mlflow.log_figure(fig, f"{graphs_dir}/roc_curve.png")
 
     # Save the plot
-    plt.savefig(f"{graphs_dir}/roc_curve.png", dpi=150, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/roc_curve.png", dpi=300, bbox_inches='tight')
     plt.close(fig)
-
-    # Log the AUC metric explicitly
-    mlflow.log_metric("test_auc", roc_auc)
 
 # Plot feature importance
 def plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, data_dir, best_params,
@@ -854,7 +848,7 @@ def plot_calibration_curve(final_pipeline, X_test, y_test, classifier_type, grap
             ax.set_xlabel("Mean Predicted Probability")
             ax.set_ylabel("Fraction of Positives")
             ax.grid(True)
-            plt.savefig(f"{graphs_dir}/calibration_curve.png", dpi=150, bbox_inches='tight')
+            plt.savefig(f"{graphs_dir}/calibration_curve.png", dpi=300, bbox_inches='tight')
             plt.close(fig)
 
             # Log Brier score
@@ -886,7 +880,7 @@ def plot_calibration_curve(final_pipeline, X_test, y_test, classifier_type, grap
             ax.set_xlabel("Mean Scaled Decision Score")
             ax.set_ylabel("Fraction of Positives")
             ax.grid(True)
-            plt.savefig(f"{graphs_dir}/calibration_curve.png", dpi=150, bbox_inches='tight')
+            plt.savefig(f"{graphs_dir}/calibration_curve.png", dpi=300, bbox_inches='tight')
             plt.close(fig)
 
             # Log Brier score
@@ -929,7 +923,7 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
                           rounded=True,
                           max_depth=4) # Limit depth for readability - but ideally expand this for the final graph
                 plt.title("Random Forest - First Tree")
-                plt.savefig(f"{graphs_dir}/decision_tree_1.png", dpi=200, bbox_inches='tight')
+                plt.savefig(f"{graphs_dir}/decision_tree_1.png", dpi=300, bbox_inches='tight')
                 plt.close()
 
                 # Also export text representation
@@ -949,7 +943,7 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
                           rounded=True,
                           max_depth=4)
                 plt.title("Gradient Boosting - First Tree")
-                plt.savefig(f"{graphs_dir}/decision_tree_1.png", dpi=200, bbox_inches='tight')
+                plt.savefig(f"{graphs_dir}/decision_tree_1.png", dpi=300, bbox_inches='tight')
                 plt.close()
 
             elif classifier_type == 'xgb':
@@ -972,7 +966,7 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
                 plt.figure(figsize=(25, 15))
                 xgb_plot_tree(clf, tree_idx=0, rankdir='LR')
                 plt.title("XGBoost - First Tree")
-                plt.savefig(f"{graphs_dir}/decision_tree_1.png", dpi=200, bbox_inches='tight')
+                plt.savefig(f"{graphs_dir}/decision_tree_1.png", dpi=300, bbox_inches='tight')
                 plt.close()
 
                 # Check size of trees
@@ -1015,7 +1009,7 @@ def plot_precision_recall(final_pipeline, X_test, y_test, graphs_dir):
         ax.set_title(f"Precision-Recall Curve (AP = {average_precision:.2f})")
 
         # Save and log
-        plt.savefig(f"{graphs_dir}/precision_recall_curve.png", dpi=150, bbox_inches='tight')
+        plt.savefig(f"{graphs_dir}/precision_recall_curve.png", dpi=300, bbox_inches='tight')
         mlflow.log_figure(fig, "precision_recall_curve.png")
         plt.close(fig)
 
@@ -1067,7 +1061,7 @@ def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):
     plt.legend()
 
     # Save and show
-    plt.savefig(f"{graphs_dir}/pca_test_before_prediction.png", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/pca_test_before_prediction.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     ### Create a second PCA colour coded by TP/FP/TN/FN
@@ -1108,11 +1102,12 @@ def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):
                 bbox={"facecolor": "white", "alpha": 0.8, "pad": 5})
 
     # Save and log
-    plt.savefig(f"{graphs_dir}/pca_test_prediction_outcomes.png", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/pca_test_prediction_outcomes.png", dpi=300, bbox_inches='tight')
     plt.close()
 
 ### NEURAL NETWORKS ####################################################################################################
-
+# IMPROVE: Some of these functions are very similar to traditional ML functions above with small changes made so they'll
+#  run. Ideally combine into one more elegant function.
 
 
 

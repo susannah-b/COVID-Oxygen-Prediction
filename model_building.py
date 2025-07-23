@@ -14,7 +14,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text
 from sklearn.calibration import calibration_curve, CalibrationDisplay
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, brier_score_loss, roc_auc_score
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, brier_score_loss, roc_auc_score, \
+    classification_report
 from sklearn.model_selection import cross_val_score, StratifiedKFold, learning_curve, LearningCurveDisplay
 from sklearn.linear_model import LogisticRegression, Lasso
 from sklearn.feature_selection import SelectFromModel, SequentialFeatureSelector, f_classif, SelectKBest, RFECV, VarianceThreshold
@@ -186,7 +187,7 @@ try:
     plt.legend()
 
     # Save and show
-    plt.savefig(f"{graphs_dir}/pca_all_data.png", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/pca_all_data.png", dpi=300, bbox_inches='tight')
     plt.close()
 
 except Exception as e:
@@ -932,13 +933,6 @@ with mlflow.start_run(run_name=run_name) as run:
     signature = infer_signature(X_train, final_pipeline.predict(X_train))
     mlflow.sklearn.log_model(final_pipeline, "best_model", signature=signature, input_example=input_example)
 
-    # Evaluate the final model on the test set
-    y_pred = final_pipeline.predict(X_test)
-    y_proba = final_pipeline.predict_proba(X_test)[:, 1]
-    test_accuracy = accuracy_score(y_test, y_pred)
-    test_f1 = f1_score(y_test, y_pred)
-    test_roc = roc_auc_score(y_test, y_proba)
-
     # Print confusion matrix
     cm = confusion_matrix(y_test, y_pred)
     print("Confusion Matrix:\n", cm)
@@ -946,18 +940,38 @@ with mlflow.start_run(run_name=run_name) as run:
     # Save confusion matrix
     plot_confusion_matrix(cm, graphs_dir)
 
+    # Evaluate the final model on the test set
+    y_pred = final_pipeline.predict(X_test)
+    y_proba = final_pipeline.predict_proba(X_test)[:, 1]
+    test_accuracy = accuracy_score(y_test, y_pred)
+    test_f1 = f1_score(y_test, y_pred)
+    test_roc = roc_auc_score(y_test, y_proba)
+    tn, fp, fn, tp = cm.ravel()
+    sensitivity = tp / (tp + fn) # aka TPR, recall
+    specificity = tn / (tn + fp) # aka TNR
+    precision = tp / (tp + fp) # aka PPV
+    npv = tn / (tn + fn)
+
+    # Classification report
+    print("\nClassification Report:")
+    print(classification_report(y_test, y_pred, target_names=["O2 not required", "O2 required"]))
+
+    # Print and log metrics
     print(f"\nTest accuracy with best model ({classifier_type}): {test_accuracy:.4f}")
+    mlflow.log_metric("test_accuracy", test_accuracy)
     print(f"Test F1 score with best model ({classifier_type}): {test_f1:.4f}")
+    mlflow.log_metric("test_roc", test_roc)
     print(f"Test AUROC score with best model ({classifier_type}): {test_roc:.4f}")
+    mlflow.log_metric("test_f1", test_f1)
+    mlflow.log_metric("sensitivity-tpr-recall", sensitivity)
+    mlflow.log_metric("specificity-tnr", specificity)
+    mlflow.log_metric("precision-ppv", precision)
+    mlflow.log_metric("npv", npv)
 
     # Save predictions to csv
     model_results = pd.DataFrame({'Real values': y_test,'ML predictions': y_pred}, index=X_test.index)
     model_results.to_csv(f"{output_data_dir}/Prediction_results_test_data.csv")
 
-    # Log some key metrics #IMPROVE - do more?
-    mlflow.log_metric("test_accuracy", test_accuracy)
-    mlflow.log_metric("test_roc", test_roc)
-    mlflow.log_metric("test_f1", test_f1)
 
 ### GRAPHS #############################################################################################################
     # Plot PCA on the combined dataset - i.e. original data after feature selection
@@ -975,7 +989,7 @@ with mlflow.start_run(run_name=run_name) as run:
     plot_learning_curve(final_pipeline, X_train, y_train, graphs_dir)
 
     # Plot ROC/AUC curves
-    plot_roc_auc(final_pipeline, X_test, y_test, graphs_dir)
+    plot_roc_auc(y_proba, y_test, graphs_dir)
 
     # Plot feature importance
     plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, output_data_dir, best_params,
@@ -1005,6 +1019,12 @@ with mlflow.start_run(run_name=run_name) as run:
     mlflow.log_artifacts(graphs_dir, artifact_path="graphs")
     mlflow.log_artifacts(output_data_dir, artifact_path="tables")
     #todo also log metric test accuracy, f1, anything else I generate
+
+    ### SAVE DATA FOR ADDITIONAL GRAPHS ################################################################################
+    y_pred_df = pd.DataFrame(y_pred, index=y_test.index) #todo check index is correct
+    y_proba_df = pd.DataFrame(y_proba, index=y_test.index)
+    y_results = pd.concat([y_pred_df, y_proba_df], axis=0)
+    y_results.to_csv(f"{output_data_dir}/y_results.csv")
 
 ### STORE RESULTS IN NEW FOLDER ########################################################################################
 # todo: if running as a standalone script (not in wrapper) then it will copy whatever old files + NN files too. Ideally only select current run files + ML
