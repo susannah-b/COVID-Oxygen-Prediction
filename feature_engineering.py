@@ -19,6 +19,7 @@ import argparse
 import pandas as pd
 from pathlib import Path
 import numpy as np
+import matplotlib.pyplot as plt
 from sklearn.model_selection import GroupShuffleSplit
 import os
 import json
@@ -409,8 +410,6 @@ remove_isaric = ['Chol', # Unsure on this columns meaning, but I can't see anyth
                  'For escalation? (Y/N)', # Couldn't find relevant column in ISARIC data
                  'PBMC No Calculation', # Couldn't find relevant column in ISARIC data
                  'PBMC No', # Couldn't find relevant column in ISARIC data
-                 'Survived Admission', # Couldn't find relevant column in ISARIC data
-                 'Days_between', # Irrelevant as using D0 samples only
                  'MADU admission', # Couldn't find relevant column in ISARIC data
                  'Survived Admission', # Couldn't find relevant column in ISARIC data
                  'Weight (kg)', # Exists in PHOSP but is NaN for all
@@ -678,15 +677,9 @@ plot_missingness_msno(merged_isaric, 'ISARIC', meta_cols_isaric, validation_grap
 merged_surrey = investigate_null(merged_surrey, 'Surrey', merged_null_before_surrey, sample_inves_7, training_data)
 merged_isaric = investigate_null(merged_isaric, 'ISARIC', merged_null_before_isaric, sample_inves_7, validation_data)
 
-# Determine how many metadata columns remain and plot with missingno
+# Determine how many metadata columns remain and plot with missingno # Note: more columns will be dropped later if not in both datasets, so some columns here may not be in the final metadata columns after all processing
 meta_cols_surrey = remaining_meta(meta_cols_names.tolist(), merged_surrey, sample_inves_7, training_graphs)
 meta_cols_isaric = remaining_meta(isaric_cols.values(), merged_isaric, sample_inves_7, validation_graphs)
-
-# Update config for later access
-with open(config_path, "w") as f:
-    config["general"]["training_meta_cols"] = meta_cols_surrey
-    config["general"]["validation_meta_cols"] = meta_cols_isaric
-    yaml.dump(config, f, sort_keys=False)
 
 ### CONVERT TO NUMERICAL ###############################################################################################
 # Initialise list of numerical vs categorical
@@ -727,6 +720,16 @@ if validate:
 
         print(f"{len(dropped_isaric)} columns dropped from ISARIC:")
         print(dropped_isaric)
+
+# Recalculate how many metadata columns remain and plot with missingno # Note: more columns will be dropped later if not in both datasets, so some columns here may not be in the final metadata columns after all processing
+meta_cols_surrey = remaining_meta(meta_cols_names.tolist(), merged_surrey, sample_inves_7=True, graphs_dir=training_graphs)
+meta_cols_isaric = remaining_meta(isaric_cols.values(), merged_isaric, sample_inves_7, validation_graphs)
+
+# Update config for later access
+with open(config_path, "w") as f:
+    config["general"]["training_meta_cols"] = meta_cols_surrey
+    config["general"]["validation_meta_cols"] = meta_cols_isaric
+    yaml.dump(config, f, sort_keys=False)
 
 ### LOG2 TRANSFORM THE PROTEOMICS DATA #################################################################################
 merged_surrey.iloc[:,meta_cols_surrey:] = np.log2(merged_surrey.iloc[:,meta_cols_surrey:] + 1e-6) # IMPROVE This log transformation is not noted in the data headers anywhere but is used in all future processing
@@ -783,6 +786,8 @@ test = merged_surrey.iloc[test_idx]
 train.to_csv(f"{training_data}/Surrey_train.csv")
 test.to_csv(f"{training_data}/Surrey_test.csv")
 
+# Close all figures
+plt.close('all')
 
 # TODO: Expand data exploration further (e.g. from MH model data_exploration.py)
 # Can do head and tail of data to check for bizare values, eg 1000 years old
