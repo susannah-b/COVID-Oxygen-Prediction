@@ -33,6 +33,9 @@ run_name = f"{run_number}_{timestamp}_{run_suffix}" # Unique ID for each model b
 build_ML = config["build_traditional"]
 build_NN = config["build_neural_network"]
 
+# TODO temporary bypass to allow pipeline to be run without imputing
+run_name = "1_0724-234035"
+
 ### Create an input folder for the model to store the data
 input_storage_prelim = Path("inputs") # Where feature_engineering.py and data_preprocessing output the data for both models
 input_storage_ML = Path("inputs/ML")
@@ -78,13 +81,14 @@ if process.returncode != 0:
     print("Warning: feature_engineering.py failed")
     exit(1)
 
-# Run data_preprocessing.py - this script splits, normalises, encodes, and imputes the data to prepare the datasets for
-# model building.
-process = subprocess.run(['python', 'data_preprocessing.py', '--run_name', run_name, '--from_pipeline'],text=True)
-# Check if failed
-if process.returncode != 0:
-    print("Warning: data_preprocessing.py failed")
-    exit(1)
+# TODO temporarily commented out to allow running without imputing
+# # Run data_preprocessing.py - this script splits, normalises, encodes, and imputes the data to prepare the datasets for
+# # model building.
+# process = subprocess.run(['python', 'data_preprocessing.py', '--run_name', run_name, '--from_pipeline'],text=True)
+# # Check if failed
+# if process.returncode != 0:
+#     print("Warning: data_preprocessing.py failed")
+#     exit(1)
 
 ### MOVE FILES TO RELEVANT MODEL FOLDER ################################################################################
 # In order to use the exact same data for preliminary vs ML models, the data needs to be copied into the relevant folder

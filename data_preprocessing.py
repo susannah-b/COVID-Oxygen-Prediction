@@ -9,6 +9,7 @@ from pathlib import Path
 import argparse
 import yaml
 import matplotlib.pyplot as plt
+import numpy as np
 from functions import convert_categories, normalise_MS, impute_MICE, encode_categorical, encode_y, \
     plot_missingness_ms
 
@@ -180,13 +181,17 @@ nominal_cats = [] # In this case empty, but may not be with other data sets so l
 # For both X_train and X_test (and isaric_X), convert to ordered categorical WITHOUT extracting codes
 
 ### Convert categories to pandas categorical - ordinal and nominal
+# Convert series to frame # todo this only recently errored - hopefully this fix effects nothing but check
+surrey_y_train = surrey_y_train.to_frame()
+y_test = y_test.to_frame()
+isaric_y = isaric_y.to_frame()
 # Ordinal categories
 surrey_X_train = convert_categories(surrey_X_train, ordinal_cats)
 surrey_y_train = convert_categories(surrey_y_train, ordinal_cats)
 X_test = convert_categories(X_test, ordinal_cats)
 y_test = convert_categories(y_test, ordinal_cats)
 isaric_X = convert_categories(isaric_X, ordinal_cats)
-isaric_X = convert_categories(isaric_X, ordinal_cats)
+isaric_y = convert_categories(isaric_y, ordinal_cats)
 
 ### NORMALISE PROTEOMICS DATA ########################################################################################## #TODO is it better to impute first?
 surrey_X_train_quant = normalise_MS(surrey_X_train, meta_cols_surrey)
@@ -196,7 +201,7 @@ isaric_X_quant = normalise_MS(isaric_X, meta_cols_isaric)
 ### IMPUTE MISSING VALUES ##############################################################################################
 # Visualise missing data in the MS data to investigate missingness type
 plot_missingness_ms(surrey_X_train_quant, training_graphs, 'Surrey')
-plot_missingness_ms(isaric_X, validation_graphs, 'ISARIC')
+plot_missingness_ms(isaric_X_quant, validation_graphs, 'ISARIC')
 
 imputed_surrey_train = f"{training_data}/Surrey_train_after_imputation.csv"
 imputed_surrey_test = f"{training_data}/Surrey_test_after_imputation.csv"

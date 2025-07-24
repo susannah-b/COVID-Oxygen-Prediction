@@ -4,7 +4,7 @@
 # Note: some settings primarily used for testing remain in the Python scripts which can be changed as needed.
 
 # Which model to build:
-build_traditional: false
+build_traditional: true
 build_neural_network: true
   # Used in the wrapper script to determine which model type to build
 
@@ -20,7 +20,8 @@ general:
   host: "127.0.0.1"
   port: 8080
     # Host and port for local tracking serverfor MLflow
-  training_meta_cols: None
+  training_meta_cols: 0
+  validation_meta_cols: 0
 
 feature_engineering:
   day_zero: True
@@ -40,7 +41,7 @@ data_preprocessing:
   drop_metadata: False
     # Determine whether to drop the metadata; i.e. only use proteomics data. 
   num_datasets_imputation: 10
-  iterations: 10
+  iterations_imputation: 10
 
 model_building:
   var_threshold: 1e-10
