@@ -29,9 +29,10 @@ import mlflow.sklearn
 from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
 import warnings
-from functions import basic_train, port_in_use, pca_original, plot_learning_curve, \
+from functions import basic_train, port_in_use, pca_pre_post_fs, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
-    plot_pca_predicted, plot_confusion_matrix, plot_fs_performance
+    plot_pca_predicted, plot_confusion_matrix, plot_fs_performance, plot_pca_original, plot_pca_test_unprocessed, \
+    remaining_meta, grouped_shap
 import re
 import os
 from datetime import datetime
@@ -42,6 +43,7 @@ import json
 import joblib
 import argparse
 from sklearn.metrics import confusion_matrix, classification_report
+import shap
 from sklearn.base import clone
 
 ### SET RANDOM SEEDS ###################################################################################################
@@ -108,13 +110,16 @@ dataset = "ISARIC"
 X_path = Path(__file__).parent / data_dir / f"{dataset}_X.csv"
 y_path = Path(__file__).parent / data_dir / f"{dataset}_y.csv"
 X_data = pd.read_csv(X_path, index_col=0)
-y_data = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
+y_data = pd.read_csv(y_path, index_col=0).reset_index(drop=True).squeeze()  # Convert to 1D array
 
 # Convert y to float32 for pytorch
 y_data = y_data.astype(np.float32)
 
 print(f"Validation samples: {len(X_data)}")
 print(f"Feature dimensions: {X_data.shape[1]} | Classes: {y_data.nunique()}")
+
+### PCA ON ORIGINAL DATA ###############################################################################################
+plot_pca_test_unprocessed(X_data, y_data, graphs_dir)
 
 ### CONVERT INTEGER COLUMNS TO FLOAT ###################################################################################
   # Safely handles missing values
@@ -132,6 +137,25 @@ class IntToFloatTransformer(BaseEstimator, TransformerMixin):
             X[float64_cols] = X[float64_cols].astype(np.float32)
         return X
 # TODO: this is a duplicate of the transformer in the neural network so is now defined twice - ideally import from another script
+
+### CREATE WRAPPER FOR MODEL ###########################################################################################
+# Due to the combined sklearn and pytorch elements of the pipeline (preprocessing and NN model), the model is required to
+#  be logged as pyfunc, not sklearn or pytorch. It therefore has no .predict attribute needed for SHAP KernelExplainer.
+
+# Wrapper function to convert numpy input to pytorch tensors
+def model_predict(X):
+    # Convert numpy array to PyTorch tensor
+    X_tensor = torch.tensor(X, dtype=torch.float32)
+
+    # Make predictions
+    model.eval()
+    with torch.no_grad():
+        logits = model(X_tensor)
+        # Return probabilities (sigmoid output)
+        return torch.sigmoid(logits).numpy()
+
+# IMPROVE: this is defined in both the training script and here. move to functions
+
 ### MLFLOW TRACKING ####################################################################################################
 if not port_in_use(host, port):
     print(f"Running tracking server on {host}:{port}")
@@ -148,7 +172,7 @@ mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "143_0723-204940_graphs" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "173_0724-213446_graphs" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
@@ -256,32 +280,60 @@ with mlflow.start_run(run_name=val_run_name) as run:
 
     #TODO pca is commented - works for NN on test (and normal ML) but failing with NN validation - fix later
     ### GRAPHS #############################################################################################################
-    # Plot PCA on the combined dataset - i.e. original data after feature selection #todo for all pcas, check a few samples to confirm they're correct (label on graph)
+    # Plot PCA on the combined dataset - i.e. all data after feature selection #todo for all pcas, check a few samples to confirm they're correct (label on graph)
     with mlflow.start_run(nested=True):  # Start another run to avoid auologging conflicts
         mlflow.pytorch.autolog(disable=True)  # Disables autolog inside this run
-        # Call function to plot PCA on the dataset prior to feature selection
-        # pca_original(X_data, input_features, y_data, graphs_dir) #todo fix for NN
+        # Call function to plot PCA on the dataset post feature selection
+        pca_pre_post_fs(X_data, selected_features, y_data, graphs_dir, "After")
 
     # Plot ROC/AUC curves
     plot_roc_auc(y_proba, y_data, graphs_dir)
 
-    # Plot feature importance
-    classifier_type = 'neural_network'
-    # plot_feature_importance(classifier_type, model, selected_features, graphs_dir, output_data_dir, model.get_params(),
-    #                         X_data, y_data) #todo remove/fix this for NN
+    # SHAP
+    # WARNING - having issues with 'X does not have valid feature names' - fix if needed but avoid using SHAP graphs for exval if possible.
+    X_data_df = pd.DataFrame(X_data, columns=selected_features)  # Convert back to df for function use
+    explainer = shap.KernelExplainer(model.predict, X_data_df[:10])  # WARNING: As background is done on the same dataset I'm not sure of the validity
+    shap_values = explainer.shap_values(X_data_df, nsamples=100)  # entire dataset
+    plt.figure()
+    shap.summary_plot(shap_values, X_data_df, feature_names=selected_features, show=False)
+    plt.tight_layout()
+    plt.savefig(f"{graphs_dir}/SHAP_graph.png", dpi=300, bbox_inches='tight')
+    plt.close()
 
-    # # Plot calibration curve
-    # plot_calibration_curve(model, X_data, y_data, classifier_type, graphs_dir) #todo remove/fix this for NN
+    ### Repeat SHAP but this time aggregate metadata and protein data to examine influence
+    # Calculate meta columns after feature selection
+    starting_meta_cols_count = config['general']['training_meta_cols'] - 1  # -1 to exclude label
+    meta_cols_before = X_data_df.iloc[:, :starting_meta_cols_count].columns
+    protein_cols_before = X_data_df.iloc[:, starting_meta_cols_count:].columns
+    meta_cols_surrey = remaining_meta(meta_cols_before.tolist(), X_data_df, sample_inves_7=False, graphs_dir=None)  # Note: The graph produced here isn't really needed but kept in to visualise selected features
+    metadata_features = selected_features[:meta_cols_surrey]
+    proteomics_features = selected_features[meta_cols_surrey:]
+
+    # Split SHAP based on class
+    shap_groups = {"Metadata": metadata_features,
+                   "Proteomics data": proteomics_features
+                   }
+    shap_grouped = grouped_shap(shap_values, selected_features, shap_groups)
+    plt.figure()
+    shap.summary_plot(shap_grouped.values, feature_names=shap_grouped.columns, show=False)
+    plt.tight_layout()
+    plt.savefig(f"{graphs_dir}/SHAP_graph_grouped.png", dpi=300, bbox_inches='tight')
+    with open(f"{graphs_dir}/SHAP_warning.txt") as f:
+        f.write("Warning: Due to issues with SHAP graph generation, it is recommended to avoid using the external \
+        validation SHAP graphs. If needed, ideally return to the script to fix the issue with feature names.")
+        f.close()
+    # Plot calibration curve
+    classifier_type = 'neural_network'
+    plot_calibration_curve(y_proba, y_data, classifier_type, graphs_dir)
 
     # Plot a precision-recall curve
     plot_precision_recall(y_proba, y_data, graphs_dir)
 
-    ### Plot PCA on final predictions - Test data
+    ### Plot PCA on final predictions - Test data before and after prediction
     with mlflow.start_run(nested=True):  # Start another run to avoid autologging conflicts
         mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
-
         # Plot PCA
-        # plot_pca_predicted(X_data, selected_features, y_data, graphs_dir, predictions) # todo fix for NN
+        plot_pca_predicted(X_data, selected_features, y_data, graphs_dir, predictions) # todo fix for NN
 
     # Print run id
     val_run_id = run.info.run_id

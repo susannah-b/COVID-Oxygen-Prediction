@@ -599,9 +599,50 @@ def plot_confusion_matrix(cm, graphs_dir): #TODO ai-gen and untested - Can also 
     fig.savefig(f"{graphs_dir}/confusion_matrix.png", dpi=300)
     plt.close(fig)
 
+# Plot PCA on the combined dataset before feature selection
+def plot_pca_original(X_train, X_test, y_train, y_test, graphs_dir):
+    try:
+        # Combine train and test
+        X_full = pd.concat([X_train, X_test]).values
+        y_full = np.concatenate([y_train, y_test])
 
+        # Standardize
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X_full)
+
+        # PCA
+        pca = PCA(n_components=2)
+        principal_components = pca.fit_transform(X_scaled)
+
+        plt.figure(figsize=(14, 10))
+
+        # Plot directly from arrays
+        plt.scatter(principal_components[y_full == 0, 0],
+                    principal_components[y_full == 0, 1],
+                    c='#088BDD', alpha=0.7, label='Does not require O₂')
+        plt.scatter(principal_components[y_full == 1, 0],
+                    principal_components[y_full == 1, 1],
+                    c='red', alpha=0.7, label='Requires O₂')
+
+        # Add explained variance
+        explained_var = pca.explained_variance_ratio_ * 100
+        plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
+        plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
+        plt.title('PCA of Full Dataset - Surrey')
+        plt.grid(alpha=0.3)
+        plt.legend()
+
+        # Save and show
+        plt.savefig(f"{graphs_dir}/pca_all_data.png", dpi=300, bbox_inches='tight')
+        plt.close()
+
+    except Exception as e:
+        print(f"Error creating PCA biplot on full dataset: {str(e)}")
+
+# IMPROVE: PCA functions could be consolidated (especially if combining for plot_pca_original etc outside of the function)
+#  Note: this is named to plot pre and post FS, but currently just does it post ('after')
 # Plot PCA on the combined dataset - i.e. original data after feature selection
-def pca_original(X_full, selected_features, y_full, graphs_dir):
+def pca_pre_post_fs(X_full, selected_features, y_full, graphs_dir, fs_state):
     # Select chosen features only
     X_selected = X_full[selected_features]
 
@@ -633,12 +674,12 @@ def pca_original(X_full, selected_features, y_full, graphs_dir):
     explained_var = pca.explained_variance_ratio_ * 100
     plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
     plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
-    plt.title('PCA After Feature Selection')
+    plt.title(f'PCA {fs_state} Feature Selection')
     plt.grid(alpha=0.3)
     plt.legend()
 
     # Save and show
-    plt.savefig(f"{graphs_dir}/pca_full_dataset_after_FS.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/pca_full_dataset_{fs_state}_FS.png", dpi=300, bbox_inches='tight')
     plt.close()
 
 # Plot learning curve
@@ -983,6 +1024,47 @@ def plot_precision_recall(y_proba, y_test, graphs_dir):
 
     except Exception as e:
         print(f"Error generating Precision-Recall curve: {str(e)}")
+
+# Plot PCA on the final predictions derived from test data
+def plot_pca_test_unprocessed(X_test, y_test, graphs_dir):
+    # Reset y index to avoid errors # IMPROVE for this and other PCA, check index resetting or rewrite to avoid
+    y_test = y_test.reset_index(drop=True)
+
+    # Standardize the selected data
+    scaler = StandardScaler()  # WARNING Avoiding using the same one as in the pipeline to prevent data leakage - not sure if it's an issue but an error occurs when using the pipeline ver in the second PCA above
+    X_scaled = scaler.fit_transform(X_test)
+
+    # Perform PCA
+    pca = PCA(n_components=2)
+    principal_components = pca.fit_transform(X_scaled)
+    pc_df = pd.DataFrame(data=principal_components, columns=['PC1', 'PC2'])
+    pc_df = pc_df.reset_index(drop=True)  # Ensure index alignment
+
+    plt.figure(figsize=(7, 5))
+
+    # Create boolean masks
+    class_0_mask = (y_test == 0)
+    class_1_mask = (y_test == 1)
+
+    # Plot using the aligned indices
+    plt.scatter(pc_df.loc[class_0_mask, 'PC1'],
+                pc_df.loc[class_0_mask, 'PC2'],
+                c='#088BDD', alpha=0.7, label='Does not require O2')
+    plt.scatter(pc_df.loc[class_1_mask, 'PC1'],
+                pc_df.loc[class_1_mask, 'PC2'],
+                c='red', alpha=0.7, label='Requires O2')
+
+    # Add explained variance
+    explained_var = pca.explained_variance_ratio_ * 100
+    plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
+    plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
+    plt.title('PCA of test data - ground truth')
+    plt.grid(alpha=0.3)
+    plt.legend()
+
+    # Save and show
+    plt.savefig(f"{graphs_dir}/pca_test_before_processing.png", dpi=300, bbox_inches='tight')
+    plt.close()
 
 # Plot PCA on the final predictions derived from test data
 def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):

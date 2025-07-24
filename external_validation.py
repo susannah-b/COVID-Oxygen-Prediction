@@ -16,8 +16,9 @@ import argparse
 import yaml
 import os
 
-from functions import port_in_use, pca_original, plot_roc_auc, plot_feature_importance, plot_calibration_curve, \
-    plot_decision_tree, plot_precision_recall, plot_pca_predicted, plot_confusion_matrix
+from functions import port_in_use, pca_pre_post_fs, plot_roc_auc, plot_feature_importance, plot_calibration_curve, \
+    plot_decision_tree, plot_precision_recall, plot_pca_predicted, plot_confusion_matrix, plot_pca_original, \
+    plot_pca_test_unprocessed
 
 # Set global random seeds
 np.random.seed(42)
@@ -83,6 +84,12 @@ y_data = pd.read_csv(y_path, index_col=0)
 # Ensure y_data is a 1-D Series #TODO why do i need to do this for exval but not m_b?
 y_data = y_data.reset_index(drop=True).squeeze() # Convert to a series to avoid an issue with plot_pca_predicted
 
+print(f"Validation samples: {len(X_data)}")
+print(f"Feature dimensions: {X_data.shape[1]} | Classes: {y_data.nunique()}")
+
+### PCA ON ORIGINAL DATA ###############################################################################################
+plot_pca_test_unprocessed(X_data, y_data, graphs_dir)
+
 ### MLFLOW TRACKING ####################################################################################################
 if not port_in_use(host, port):
     print(f"Running tracking server on {host}:{port}")
@@ -99,7 +106,7 @@ mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "141_0723-204621_graphs" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "173_0724-213624_graphs" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
@@ -185,11 +192,11 @@ with mlflow.start_run(run_name=val_run_name) as run:
     model_results.to_csv(f"{output_data_dir}/Prediction_results_validation_data.csv")
 
     ### GRAPHS #############################################################################################################
-    # Plot PCA on the combined dataset - i.e. original data after feature selection #todo for all pcas, check a few samples to confirm they're correct (label on graph)
+    # Plot PCA on the combined dataset - i.e. all data after feature selection #todo for all pcas, check a few samples to confirm they're correct (label on graph)
     with mlflow.start_run(nested=True): # Start another run to avoid auologging conflicts
         mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
-        # Call function to plot PCA on the dataset prior to feature selection
-        pca_original(X_data, input_features, y_data, graphs_dir)
+        # Call function to plot PCA on the dataset post feature selection
+        pca_pre_post_fs(X_data, selected_features, y_data, graphs_dir, "After")
 
     # Plot ROC/AUC curves
     plot_roc_auc(y_proba, y_data, graphs_dir)
@@ -208,7 +215,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
     # Plot a precision-recall curve
     plot_precision_recall(y_proba, y_data, graphs_dir)
 
-    ### Plot PCA on final predictions - Test data
+    ### Plot PCA on final predictions - Test data before and after prediction
     with mlflow.start_run(nested=True):  # Start another run to avoid autologging conflicts
         mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
 

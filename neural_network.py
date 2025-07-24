@@ -35,9 +35,10 @@ import mlflow.sklearn
 from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
 import warnings
-from functions import port_in_use, pca_original, plot_learning_curve, \
+from functions import port_in_use, pca_pre_post_fs, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
-    plot_pca_predicted, plot_confusion_matrix, plot_decision_distribution, remaining_meta, grouped_shap
+    plot_pca_predicted, plot_confusion_matrix, plot_decision_distribution, remaining_meta, grouped_shap, \
+    plot_pca_original, plot_pca_test_unprocessed
 import re
 import os
 from datetime import datetime
@@ -160,43 +161,10 @@ device = "cuda" if torch.cuda.is_available() else "cpu" # Automatically uses a G
 
 #TODO check that X_train is now correct elsewhere in code, post 2nd split (eg for graphs, anytihng that required len(X_train)? - is pca right?
 ### PCA ON ORIGINAL DATA ###############################################################################################
-try:
-    # Combine train and test
-    X_full = pd.concat([X_train_full, X_test]).values
-    y_full = np.concatenate([y_train_full, y_test])
-
-    # Standardize
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_full)
-
-    # PCA
-    pca = PCA(n_components=2)
-    principal_components = pca.fit_transform(X_scaled)
-
-    plt.figure(figsize=(14, 10))
-
-    # Plot directly from arrays
-    plt.scatter(principal_components[y_full == 0, 0],
-                principal_components[y_full == 0, 1],
-                c='#088BDD', alpha=0.7, label='Does not require O₂')
-    plt.scatter(principal_components[y_full == 1, 0],
-                principal_components[y_full == 1, 1],
-                c='red', alpha=0.7, label='Requires O₂')
-
-    # Add explained variance
-    explained_var = pca.explained_variance_ratio_ * 100
-    plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
-    plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
-    plt.title('PCA of Full Dataset - Surrey')
-    plt.grid(alpha=0.3)
-    plt.legend()
-
-    # Save and show
-    plt.savefig(f"{graphs_dir}/pca_all_data.png", dpi=300, bbox_inches='tight')
-    plt.close()
-
-except Exception as e:
-    print(f"Error creating PCA biplot on full dataset: {str(e)}")
+# Full dataset
+plot_pca_original(X_train_full, X_test, y_train_full, y_test, graphs_dir)
+# Test only (to compare to the post-processed before and after predictions graphs)
+plot_pca_test_unprocessed(X_test, y_test, graphs_dir)
 
 ### VARIANCE THRESHOLDING ##############################################################################################
   # Applied in the scikit-learn pipeline
@@ -843,6 +811,7 @@ class O2Classifier(nn.Module):
 ### CREATE WRAPPER FOR MODEL ###########################################################################################
 # Due to the combined sklearn and pytorch elements of the pipeline (preprocessing and NN model), the model is required to
 #  be logged as pyfunc, not sklearn or pytorch. It therefore has no .predict attribute needed for SHAP KernelExplainer.
+#TODO - can i just use the model as wrapped by pyfunc? or does it need to be loaded in after being logged
 
 # Wrapper function to convert numpy input to pytorch tensors
 def model_predict(X):
@@ -1025,7 +994,7 @@ with mlflow.start_run(run_name=run_name) as run:
         json.dump(X_train_original.columns.tolist(), f)
     joblib.dump(X_train_original.columns.tolist(), f"{output_data_dir}/input_features.joblib")
 
-    if show_detail:
+    if show_detail: #IMPROVE especially for NN which has a separate pipeline this might not be necessary - as in there's simpler ways
         # Track retained features post-preprocessing
         preprocessor = preprocessor.named_steps['preprocessor']
         var_thresh = preprocessor.named_steps['var_thresh']
@@ -1060,8 +1029,8 @@ with mlflow.start_run(run_name=run_name) as run:
         json.dump(selected_features, f)
     joblib.dump(selected_features, f"{output_data_dir}/selected_features.joblib")
 
-    # Reconstruct dataframe after preprocessing/dtype conversion #TODO not sure if this is needed or interferes - check. Doing it now because I understand the workflow, but can delete if not used
-    X_train = X_train_original[selected_features]
+    # # Reconstruct dataframe after preprocessing/dtype conversion #TODO not sure if this is needed or interferes - check. Doing it now because I understand the workflow, but can delete if not used
+    # X_train = X_train_original[selected_features]
 
     ### Log the final pipeline preprocessor and model
     # Save preprocessor
@@ -1180,16 +1149,16 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # TODO check over model_building for TML to see if anything extra is missed from here - and vice versa
     ### GRAPHS #############################################################################################################
-    # Plot PCA on the combined dataset - i.e. original data after feature selection
+    # Plot PCA on the combined dataset - i.e. all data after feature selection
     with mlflow.start_run(nested=True):  # Start another run to avoid auologging conflicts
         mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
 
         # Combine the datasets
-        X_full = pd.concat([X_train, X_test])
-        y_full = pd.concat([y_train, y_test]).reset_index(drop=True)
+        X_full = pd.concat([X_train_full, X_test])
+        y_full = pd.concat([y_train_full, y_test]).reset_index(drop=True)
 
-        # Call function to plot PCA on the dataset prior to feature selection
-        pca_original(X_full, selected_features, y_full, graphs_dir)
+        # Call function to plot PCA on the dataset post feature selection
+        pca_pre_post_fs(X_full, selected_features, y_full, graphs_dir, "After")
 
     # Plot learning curve
     plt.plot(train_loss_list, label='Training Loss')
@@ -1203,7 +1172,7 @@ with mlflow.start_run(run_name=run_name) as run:
     plot_roc_auc(y_proba, y_test, graphs_dir)
 
     # SHAP #IMPROVE can dimensionality reduce first due to high feature number
-    explainer = shap.KernelExplainer(model_predict, X_train_full_processed[:100])
+    explainer = shap.KernelExplainer(model_predict, X_train_full_processed[:50])
     shap_values = explainer.shap_values(X_test_processed, nsamples=100)
     plt.figure()
     shap.summary_plot(shap_values, X_test_processed, feature_names=selected_features, show=False)
@@ -1238,7 +1207,7 @@ with mlflow.start_run(run_name=run_name) as run:
     # Plot decision distribution
     plot_decision_distribution(y_proba, y_test, graphs_dir)
 
-    ### Plot PCA on final predictions - Test data
+    ### Plot PCA on final predictions - Test data before and after prediction
     with mlflow.start_run(nested=True):  # Start another run to avoid autologging conflicts
         mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
         # Plot PCA
@@ -1320,7 +1289,7 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     all_metrics.to_csv(all_key_metrics_path)
 
 # Print run ids
-# print(store_hyp_id) #todo commented out while hyperopt isn't set up
+print(store_hyp_id)
 print(store_final_id)
 
 # Close all figures

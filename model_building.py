@@ -35,9 +35,10 @@ from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 import warnings
-from functions import basic_train, IntToFloatTransformer, port_in_use, pca_original, plot_learning_curve, \
+from functions import basic_train, IntToFloatTransformer, port_in_use, pca_pre_post_fs, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
-    plot_pca_predicted, plot_confusion_matrix, plot_fs_performance, plot_decision_distribution
+    plot_pca_predicted, plot_confusion_matrix, plot_fs_performance, plot_decision_distribution, plot_pca_original, \
+    plot_pca_test_unprocessed
 import re
 import os
 from datetime import datetime
@@ -155,43 +156,11 @@ print(f"Feature dimensions: {X_train.shape[1]} | Classes: {y_train.nunique()}")
 #  then it most likely has very minimal impact. Do here to avoid regenerating data, although technically it could affect imputation/scaling/maybe FS.
 
 ### PCA ON ORIGINAL DATA ###############################################################################################
-try:
-    # Combine train and test
-    X_full = pd.concat([X_train, X_test]).values
-    y_full = np.concatenate([y_train, y_test])
+# Full dataset
+plot_pca_original(X_train, X_test, y_train, y_test, graphs_dir)
+# Test only (to compare to the post-processed before and after predictions graphs)
+plot_pca_test_unprocessed(X_test, y_test, graphs_dir)
 
-    # Standardize
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_full)
-
-    # PCA
-    pca = PCA(n_components=2)
-    principal_components = pca.fit_transform(X_scaled)
-
-    plt.figure(figsize=(14, 10))
-
-    # Plot directly from arrays
-    plt.scatter(principal_components[y_full == 0, 0],
-                principal_components[y_full == 0, 1],
-                c='#088BDD', alpha=0.7, label='Does not require O₂')
-    plt.scatter(principal_components[y_full == 1, 0],
-                principal_components[y_full == 1, 1],
-                c='red', alpha=0.7, label='Requires O₂')
-
-    # Add explained variance
-    explained_var = pca.explained_variance_ratio_ * 100
-    plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
-    plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
-    plt.title('PCA of Full Dataset - Surrey')
-    plt.grid(alpha=0.3)
-    plt.legend()
-
-    # Save and show
-    plt.savefig(f"{graphs_dir}/pca_all_data.png", dpi=300, bbox_inches='tight')
-    plt.close()
-
-except Exception as e:
-    print(f"Error creating PCA biplot on full dataset: {str(e)}")
 ### VARIANCE THRESHOLDING ##############################################################################################
   # Applied in the scikit-learn pipeline
  # IMPROVE currently set to 0 variance (which removes none of my data) and got a better result - can experiment with other values later. Since sample # is low it may be best with minimal filtering
@@ -976,16 +945,16 @@ with mlflow.start_run(run_name=run_name) as run:
 
 
 ### GRAPHS #############################################################################################################
-    # Plot PCA on the combined dataset - i.e. original data after feature selection
-    with mlflow.start_run(nested=True): #Start another run to avoid auologging conflicts
+    # Plot PCA on the combined dataset - i.e. all data after feature selection
+    with mlflow.start_run(nested=True): # Start another run to avoid auologging conflicts
         mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
 
         # Combine the datasets
         X_full = pd.concat([X_train, X_test])
         y_full = pd.concat([y_train, y_test]).reset_index(drop=True)
 
-        # Call function to plot PCA on the dataset prior to feature selection
-        pca_original(X_full, selected_features, y_full, graphs_dir)
+        # Call function to plot PCA on the dataset post feature selection
+        pca_pre_post_fs(X_full, selected_features, y_full, graphs_dir, "After")
 
     # Plot learning curve
     plot_learning_curve(final_pipeline, X_train, y_train, graphs_dir)
@@ -1010,7 +979,7 @@ with mlflow.start_run(run_name=run_name) as run:
     # Plot a precision-recall curve
     plot_precision_recall(y_proba, y_test, graphs_dir)
 
-    ### Plot PCA on final predictions - Test data
+    ### Plot PCA on final predictions - Test data before and after prediction
     with mlflow.start_run(nested=True):  # Start another run to avoid autologging conflicts
         mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
         # Plot PCA
