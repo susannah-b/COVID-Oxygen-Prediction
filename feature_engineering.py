@@ -677,9 +677,7 @@ plot_missingness_msno(merged_isaric, 'ISARIC', meta_cols_isaric, validation_grap
 merged_surrey = investigate_null(merged_surrey, 'Surrey', merged_null_before_surrey, sample_inves_7, training_data)
 merged_isaric = investigate_null(merged_isaric, 'ISARIC', merged_null_before_isaric, sample_inves_7, validation_data)
 
-# Determine how many metadata columns remain and plot with missingno # Note: more columns will be dropped later if not in both datasets, so some columns here may not be in the final metadata columns after all processing
-meta_cols_surrey = remaining_meta(meta_cols_names.tolist(), merged_surrey, sample_inves_7, training_graphs)
-meta_cols_isaric = remaining_meta(isaric_cols.values(), merged_isaric, sample_inves_7, validation_graphs)
+# Note: final calculation and plot is done below after removing non-overlapping columns
 
 ### CONVERT TO NUMERICAL ###############################################################################################
 # Initialise list of numerical vs categorical
@@ -721,8 +719,8 @@ if validate:
         print(f"{len(dropped_isaric)} columns dropped from ISARIC:")
         print(dropped_isaric)
 
-# Recalculate how many metadata columns remain and plot with missingno # Note: more columns will be dropped later if not in both datasets, so some columns here may not be in the final metadata columns after all processing
-meta_cols_surrey = remaining_meta(meta_cols_names.tolist(), merged_surrey, sample_inves_7=True, graphs_dir=training_graphs)
+# Calculate how many metadata columns remain and plot with missingno # Note: more columns will be dropped later if not in both datasets, so some columns here may not be in the final metadata columns after all processing
+meta_cols_surrey = remaining_meta(meta_cols_names.tolist(), merged_surrey, sample_inves_7, training_graphs)
 meta_cols_isaric = remaining_meta(isaric_cols.values(), merged_isaric, sample_inves_7, validation_graphs)
 
 # Update config for later access

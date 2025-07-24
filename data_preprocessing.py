@@ -8,6 +8,7 @@ import pandas as pd
 from pathlib import Path
 import argparse
 import yaml
+import matplotlib.pyplot as plt
 from functions import convert_categories, normalise_MS, impute_MICE, encode_categorical, encode_y, \
     plot_missingness_ms
 
@@ -251,3 +252,5 @@ y_test.to_csv(f"{training_data}/Surrey_y_test.csv", sep=",", index=True)
 isaric_X.to_csv(f"{validation_data}/ISARIC_X.csv", sep=",", index=True)
 isaric_y.to_csv(f"{validation_data}/ISARIC_y.csv", sep=",", index=True)
 
+# Close all figures
+plt.close('all')

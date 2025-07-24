@@ -343,3 +343,6 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
 
 # Print run ids
 print(store_val_id)
+
+# Close all figures
+plt.close('all')

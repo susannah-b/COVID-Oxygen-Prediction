@@ -21,6 +21,7 @@ import seaborn as sns
 import re
 import missingno as msno
 import miceforest as mf
+from itertools import repeat, chain
 
 ### FEATURE ENGINEERING.PY #############################################################################################
 # Check for abnormal SIDs in the data; any unexpected lengths
@@ -189,8 +190,7 @@ def remaining_meta(meta_columns, merged, sample_inves_7, graphs_dir):
         if col in existing_columns:
             if sample_inves_7:
                 print("\nRemaining metadata columns:")
-                print(merged.columns.get_loc(
-                    col) + 1)  # +1 for 1-based indexing conversion / allows for splicing where the first number is inclusive and the second exclusive
+                print(merged.columns.get_loc(col) + 1)  # +1 for 1-based indexing conversion / allows for splicing where the first number is inclusive and the second exclusive
             meta_cols = merged.columns.get_loc(col) + 1
             break
     else:
@@ -199,17 +199,18 @@ def remaining_meta(meta_columns, merged, sample_inves_7, graphs_dir):
         meta_cols = 0
 
     # Plot missingness after filtering (full dataset)
-    fig = msno.matrix(merged)
-    fig_copy = fig.get_figure()
-    fig_copy.savefig(f'{graphs_dir}/Missingness_All-data_after_filtering.png', bbox_inches='tight')
-    # Plot missingness of the metadata
-    fig = msno.matrix(merged.iloc[:, 0:meta_cols])
-    fig_copy = fig.get_figure()
-    fig_copy.savefig(f'{graphs_dir}/Missingness_All-metadata_after_filtering.png', bbox_inches='tight')
-    # Plot missingness of the quant data
-    fig = msno.matrix(merged.iloc[:, meta_cols:])  # Note: This is currently 546-27=519 MS data columns
-    fig_copy = fig.get_figure()
-    fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_after_filtering.png', bbox_inches='tight')
+    if graphs_dir:
+        fig = msno.matrix(merged)
+        fig_copy = fig.get_figure()
+        fig_copy.savefig(f'{graphs_dir}/Missingness_All-data_after_filtering.png', bbox_inches='tight')
+        # Plot missingness of the metadata
+        fig = msno.matrix(merged.iloc[:, 0:meta_cols])
+        fig_copy = fig.get_figure()
+        fig_copy.savefig(f'{graphs_dir}/Missingness_All-metadata_after_filtering.png', bbox_inches='tight')
+        # Plot missingness of the quant data
+        fig = msno.matrix(merged.iloc[:, meta_cols:])  # Note: This is currently 546-27=519 MS data columns
+        fig_copy = fig.get_figure()
+        fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_after_filtering.png', bbox_inches='tight')
     return meta_cols
 
 # Categorise as numerical or categorical
@@ -1069,3 +1070,14 @@ def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):
     plt.close()
 
 ### NEURAL NETWORKS ####################################################################################################
+# Create function for grouped shap
+def grouped_shap(shap_vals, features, groups):
+    revert_dict = lambda d: dict(chain(*[zip(val, repeat(key)) for key, val in d.items()]))
+    groupmap = revert_dict(groups)
+    shap_Tdf = pd.DataFrame(shap_vals, columns=pd.Index(features, name='features')).T
+    shap_Tdf['group'] = shap_Tdf.reset_index().features.map(groupmap).values
+    shap_grouped = shap_Tdf.groupby('group').sum().T
+    return shap_grouped
+
+
+plt.close("all")

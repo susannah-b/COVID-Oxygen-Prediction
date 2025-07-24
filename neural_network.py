@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 import warnings
 from functions import port_in_use, pca_original, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
-    plot_pca_predicted, plot_confusion_matrix, plot_decision_distribution, plot_permutation_importance
+    plot_pca_predicted, plot_confusion_matrix, plot_decision_distribution, remaining_meta, grouped_shap
 import re
 import os
 from datetime import datetime
@@ -49,6 +49,8 @@ import joblib
 import argparse
 from sklearn.metrics import confusion_matrix, classification_report
 from sklearn.base import clone
+import shap
+from itertools import repeat, chain
 # todo clean up at end
 
 # Bool to show additional detail
@@ -838,6 +840,22 @@ class O2Classifier(nn.Module):
         x = self.act(self.fc3(x))
         return self.fc4(x).squeeze(1)
 
+### CREATE WRAPPER FOR MODEL ###########################################################################################
+# Due to the combined sklearn and pytorch elements of the pipeline (preprocessing and NN model), the model is required to
+#  be logged as pyfunc, not sklearn or pytorch. It therefore has no .predict attribute needed for SHAP KernelExplainer.
+
+# Wrapper function to convert numpy input to pytorch tensors
+def model_predict(X):
+    # Convert numpy array to PyTorch tensor
+    X_tensor = torch.tensor(X, dtype=torch.float32)
+
+    # Make predictions
+    final_model.eval()
+    with torch.no_grad():
+        logits = final_model(X_tensor)
+        # Return probabilities (sigmoid output)
+        return torch.sigmoid(logits).numpy()
+
 ### TRAIN FINAL MODEL IN MLFLOW ########################################################################################
 #todo many parts were deleted from TML framework, so copy in later
 # todo edit code comment blocks/move around
@@ -1184,8 +1202,32 @@ with mlflow.start_run(run_name=run_name) as run:
     # Plot ROC curve
     plot_roc_auc(y_proba, y_test, graphs_dir)
 
-    # SHAP
-    # todo
+    # SHAP #IMPROVE can dimensionality reduce first due to high feature number
+    explainer = shap.KernelExplainer(model_predict, X_train_full_processed[:100])
+    shap_values = explainer.shap_values(X_test_processed, nsamples=100)
+    plt.figure()
+    shap.summary_plot(shap_values, X_test_processed, feature_names=selected_features, show=False)
+    plt.tight_layout()
+    plt.savefig(f"{graphs_dir}/SHAP_graph.png", dpi=300, bbox_inches='tight')
+
+    ### Repeat SHAP but this time aggregate metadata and protein data to examine influence
+    # Calculate meta columns after feature selection
+    starting_meta_cols_count = config['general']['training_meta_cols'] - 1 # Before preprocessing. -1 Due to removed of Label (O2 req.) column for X vs y
+    meta_cols_before = X_train_full.iloc[:, :starting_meta_cols_count].columns # Slice dataset for meta and MS data before processing and get columns
+    protein_cols_before = X_train_full.iloc[:, starting_meta_cols_count:].columns
+    X_train_full_processed_df = pd.DataFrame(X_train_full_processed, columns=selected_features) # Convert back to df for function use
+    meta_cols_surrey = remaining_meta(meta_cols_before.tolist(), X_train_full_processed_df, sample_inves_7=False, graphs_dir=None) # Note: The graph produced here isn't really needed but kept in to visualise selected features
+    metadata_features = selected_features[:meta_cols_surrey]
+    proteomics_features = selected_features[meta_cols_surrey:]
+    # Split SHAP based on class
+    shap_groups = {"Metadata" : metadata_features,
+                   "Proteomics data" : proteomics_features
+                   }
+    shap_grouped = grouped_shap(shap_values, selected_features, shap_groups)
+    plt.figure()
+    shap.summary_plot(shap_grouped.values, feature_names=shap_grouped.columns, show=False)
+    plt.tight_layout()
+    plt.savefig(f"{graphs_dir}/SHAP_graph_grouped.png", dpi=300, bbox_inches='tight')
 
     # Plot precision-recall curve
     plot_precision_recall(y_proba, y_test, graphs_dir)
@@ -1280,6 +1322,9 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
 # Print run ids
 # print(store_hyp_id) #todo commented out while hyperopt isn't set up
 print(store_final_id)
+
+# Close all figures
+plt.close('all')
 
 # WARNING: If getting the 'too many 500 error responses' warning due to deleting files, run 'kill $(lsof -t -i tcp:8080)' in the terminal
 

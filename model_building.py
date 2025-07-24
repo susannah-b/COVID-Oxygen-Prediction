@@ -1089,6 +1089,9 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
 print(store_hyp_id)
 print(store_final_id)
 
+# Close all figures
+plt.close('all')
+
 # WARNING: If getting the 'too many 500 error responses' warning due to deleting files, run 'kill $(lsof -t -i tcp:8080)' in the terminal
 
 # Example output:
