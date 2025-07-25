@@ -106,7 +106,7 @@ mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "173_0724-213624_graphs" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "1_0724-234035_TESTING" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 

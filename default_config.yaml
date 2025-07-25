@@ -82,7 +82,7 @@ model_building:
     KNN: True
   n_models_to_tune: 2
     # The top N models - change this as needed
-  max_evals: 3 # Set to 3 for testing but will need to be increased for real training runs
+  max_evals: 1000 # Needs to be tuned TODO
     # Change this as needed
   track_final: true 
     # Whether to copy the model_output to the designated folder for easier browsing - some functions depend on this so it's strongly recommended to leave it on.

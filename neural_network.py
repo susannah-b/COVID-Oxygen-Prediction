@@ -124,7 +124,8 @@ else: # Put into input storage folder to prevent overwriting
     data_dir = f'inputs/NN/{run_name}/training_data'
 
 # Create output directories for the data
-output_data_dir = f'{data_dir}/NN'
+# output_data_dir = f'{data_dir}/NN'
+output_data_dir = Path("model_output") / f"{run_name}/training_data/NN"
 os.makedirs(output_data_dir, exist_ok=True)
 
 # Create output directory for the graphs
@@ -743,6 +744,9 @@ if not args.from_pipeline:
          config["general"]["run_number"] = run_number + 1
          yaml.dump(config, f, sort_keys=False)
      # WARNING: Run name is not automatically imported to external_validation.py if running standalone to allow specific runs to be used. Set manually.
+else:
+    rn1, rn2, rn3 = run_name.split("_")
+    hyperopt_name = f"{rn1}_hyperopt_{rn2}_{rn3}"
 
 ### HYPEROPT TUNING WITH MLFLOW ########################################################################################
 print("\nNow tuning hyperparameters...\n")

@@ -725,142 +725,151 @@ def plot_roc_auc(y_proba, y_test, graphs_dir):
     plt.savefig(f"{graphs_dir}/roc_curve.png", dpi=300, bbox_inches='tight')
     plt.close(fig)
 
-# Plot feature importance
+# Plot feature importance (or permutation)
 def plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, data_dir, best_params,
-                            X_test, y_test):
-    # Extract feature importances based on the classifier type
+                            X_test, y_test, meta_cols=None): # todo take out x test and y test from function calls - not used
+    ### Extract feature importances based on the classifier type
     if classifier_type in ['rf', 'xgb', 'gb']:
-        # These classifiers have feature_importances_ attribute
+        # Get feature importances if present
         importances = final_pipeline.named_steps['classifier'].feature_importances_
-
-        # Create DataFrame for easier plotting with seaborn
-        importance_df = pd.DataFrame({
-            'Feature': selected_features,
-            'Importance': importances
-        }).sort_values('Importance', ascending=False)
-
-        # Plot with seaborn
-        plt.figure(figsize=(12, 8))
-        sns.set_style("whitegrid")
-        ax = sns.barplot(x='Importance', y='Feature', hue='Feature', legend=False, data=importance_df.head(20),
-                         palette='viridis')
-        ax.set_title(f'Top 20 Feature Importances - {classifier_type.upper()}', fontsize=16)
-        ax.set_xlabel('Importance', fontsize=14)
-        ax.set_ylabel('Feature', fontsize=14)
-        plt.tight_layout()
-        plt.savefig(f"{graphs_dir}/feature_importance.png", dpi=300, bbox_inches='tight')
-
-        # Log the figure to MLflow
-        mlflow.log_figure(plt.gcf(), f"{graphs_dir}/feature_importance.png")
-        plt.close()
-
-        # Also save the full feature importance DataFrame as CSV
-        importance_df.to_csv(f"{data_dir}/feature_importances.csv", index=False)
-
-        print(f"\nTop 10 most important features:")
-        print(importance_df.head(10))
-
+        importance_column = 'Importance'
     elif classifier_type == 'svm' and best_params.get('kernel') == 'linear':
-        # For linear SVM, we can extract coefficients
-        coefficients = np.abs(final_pipeline.named_steps['classifier'].coef_[0])
-
-        # Create DataFrame for plotting
-        importance_df = pd.DataFrame({
-            'Feature': selected_features,
-            'Coefficient': coefficients
-        }).sort_values('Coefficient', ascending=False)
-
-        # Plot with seaborn
-        plt.figure(figsize=(12, 8))
-        sns.set_style("whitegrid")
-        ax = sns.barplot(x='Coefficient', y='Feature', data=importance_df.head(20), palette='viridis')
-        ax.set_title('Top 20 Feature Coefficients - Linear SVM', fontsize=16)
-        ax.set_xlabel('Absolute Coefficient Value', fontsize=14)
-        ax.set_ylabel('Feature', fontsize=14)
-        plt.tight_layout()
-        plt.savefig(f"{graphs_dir}/feature_importance.png", dpi=300, bbox_inches='tight')
-
-        # Log the figure to MLflow
-        mlflow.log_figure(plt.gcf(), f"{graphs_dir}/feature_coefficients.png")
-        plt.close()
-
-        # Also save the full feature importance DataFrame as CSV
-        importance_df.to_csv(f"{data_dir}/feature_coefficients.csv", index=False)
-
-        print(f"\nTop 10 most important features (by coefficient magnitude):")
-        print(importance_df.head(10))
-
+        # For linear SVM, extract coefficients
+        importances = np.abs(final_pipeline.named_steps['classifier'].coef_[0])
+        importance_column = 'Coefficient'
     elif classifier_type == 'logreg':
         # For logistic regression, extract coefficients
-        coefficients = np.abs(final_pipeline.named_steps['classifier'].coef_[0])
+        importances = np.abs(final_pipeline.named_steps['classifier'].coef_[0])
+        importance_column = 'Coefficient'
+    else:
+        print(f"Feature importance not available for {classifier_type}")
+        return
 
-        # Create DataFrame for plotting
-        importance_df = pd.DataFrame({
-            'Feature': selected_features,
-            'Coefficient': coefficients
-        }).sort_values('Coefficient', ascending=False)
+    # Create DataFrame with feature importances
+    importance_df = pd.DataFrame({'Feature': selected_features, importance_column: importances})
 
-        # Plot with seaborn
+    # Add category information if meta_cols is provided
+    if meta_cols is not None:
+        # Create category labels based on feature indices
+        categories = []
+        for i, feature in enumerate(selected_features):
+            if i < meta_cols:
+                categories.append('Metadata')
+            else:
+                categories.append('Proteomics')
+
+        importance_df['Category'] = categories
+
+        # Sort by importance within each category
+        importance_df = importance_df.sort_values([importance_column], ascending=False)
+
+        # Create grouped plots
+        fig, axes = plt.subplots(2, 2, figsize=(20, 16))
+        fig.suptitle(f'Feature Importance Analysis - {classifier_type.upper()}', fontsize=20)
+
+        # Plot top 20 overall features
+        sns.set_style("whitegrid")
+        ax1 = axes[0, 0]
+        top_features = importance_df.head(20)
+        bars = sns.barplot(x=importance_column, y='Feature', hue='Category', data=top_features,
+                           palette=['#1f77b4', '#ff7f0e'], ax=ax1)
+        ax1.set_title('Top 20 Features Overall', fontsize=16)
+        ax1.set_xlabel(f'{importance_column}', fontsize=14)
+        ax1.set_ylabel('Feature', fontsize=14)
+
+        # Plot top 10 metadata features
+        ax2 = axes[0, 1]
+        metadata_features = importance_df[importance_df['Category'] == 'Metadata'].head(10)
+        if not metadata_features.empty:
+            sns.barplot(x=importance_column, y='Feature', data=metadata_features, color='#1f77b4', ax=ax2)
+            ax2.set_title('Top 10 Metadata Features', fontsize=16)
+            ax2.set_xlabel(f'{importance_column}', fontsize=14)
+            ax2.set_ylabel('Feature', fontsize=14)
+        else:
+            ax2.text(0.5, 0.5, 'No Metadata Features', ha='center', va='center', transform=ax2.transAxes)
+            ax2.set_title('Top 10 Metadata Features', fontsize=16)
+
+        # Plot top 10 Proteomics features
+        ax3 = axes[1, 0]
+        proteomics_features = importance_df[importance_df['Category'] == 'Proteomics'].head(10)
+        if not proteomics_features.empty:
+            sns.barplot(x=importance_column, y='Feature', data=proteomics_features,
+                        color='#ff7f0e', ax=ax3)
+            ax3.set_title('Top 10 Proteomics Features', fontsize=16)
+            ax3.set_xlabel(f'{importance_column}', fontsize=14)
+            ax3.set_ylabel('Feature', fontsize=14)
+        else:
+            ax3.text(0.5, 0.5, 'No Proteomics Features', ha='center', va='center', transform=ax3.transAxes)
+            ax3.set_title('Top 10 Proteomics Features', fontsize=16)
+
+        # Plot category summary (total importance by category)
+        ax4 = axes[1, 1]
+        category_summary = importance_df.groupby('Category')[importance_column].agg(['sum', 'mean', 'count'])
+        category_summary = category_summary.reset_index()
+
+        # Create a summary bar plot
+        x_pos = range(len(category_summary))
+        bars = ax4.bar(x_pos, category_summary['sum'], color=['#1f77b4', '#ff7f0e'])
+        ax4.set_title('Total Importance by Category', fontsize=16)
+        ax4.set_xlabel('Category', fontsize=14)
+        ax4.set_ylabel(f'Total {importance_column}', fontsize=14)
+        ax4.set_xticks(x_pos)
+        ax4.set_xticklabels(category_summary['Category'])
+
+        # Add value labels on bars
+        for i, bar in enumerate(bars):
+            height = bar.get_height()
+            ax4.text(bar.get_x() + bar.get_width() / 2., height,
+                     f'{height:.3f}\n({category_summary.iloc[i]["count"]} features)',
+                     ha='center', va='bottom')
+
+        plt.tight_layout()
+        plt.savefig(f"{graphs_dir}/feature_importance_grouped.png", dpi=300, bbox_inches='tight')
+        plt.close()
+
+        # # Print category summaries
+        # print(f"\nFeature importance summary by category:\n")
+        # for category in ['Metadata', 'Proteomics']:
+        #     cat_data = importance_df[importance_df['Category'] == category]
+        #     if not cat_data.empty:
+        #         print(f"\n{category} Features:")
+        #         print(f"  Total Features: {len(cat_data)}")
+        #         print(f"  Total {importance_column}: {cat_data[importance_column].sum():.4f}")
+        #         print(f"  Top 5 {category} Features:")
+        #         print(cat_data.head(5)[['Feature', importance_column]].to_string(index=False))
+
+    else:
+        # Original single plot if no grouping
+        importance_df = importance_df.sort_values(importance_column, ascending=False)
+
         plt.figure(figsize=(12, 8))
         sns.set_style("whitegrid")
-        ax = sns.barplot(x='Coefficient', y='Feature', data=importance_df.head(20), palette='viridis')
-        ax.set_title('Top 20 Feature Coefficients - Logistic Regression', fontsize=16)
-        ax.set_xlabel('Absolute Coefficient Value', fontsize=14)
+        ax = sns.barplot(x=importance_column, y='Feature', data=importance_df.head(20),
+                         palette='viridis')
+
+        if classifier_type in ['rf', 'xgb', 'gb']:
+            ax.set_title(f'Top 20 Feature Importances - {classifier_type.upper()}', fontsize=16)
+        else:
+            ax.set_title(f'Top 20 Feature Coefficients - {classifier_type.upper()}', fontsize=16)
+
+        ax.set_xlabel(f'{importance_column}', fontsize=14)
         ax.set_ylabel('Feature', fontsize=14)
         plt.tight_layout()
         plt.savefig(f"{graphs_dir}/feature_importance.png", dpi=300, bbox_inches='tight')
-
-        # Log the figure to MLflow
-        mlflow.log_figure(plt.gcf(), f"{graphs_dir}/feature_coefficients.png")
         plt.close()
 
-        # Also save the full feature importance DataFrame as CSV
-        importance_df.to_csv(f"{data_dir}/feature_coefficients.csv", index=False)
-
-        print(f"\nTop 10 most important features (by coefficient magnitude):")
-        print(importance_df.head(10))
-
+    # Save the full feature importance DataFrame as CSV
+    if classifier_type in ['rf', 'xgb', 'gb']:
+        csv_filename = f"{data_dir}/feature_importances.csv"
     else:
-        # For other models where direct feature importance is not available use permutation importance as an alternative
-        print("\nCalculating permutation importance for features as an alternative to feature importance.")
-        try:  # WARNING - currently fails (for SVC, Ada, KNN) - if any do perform highly then rectify
-            # Calculate permutation importance
-            perm_importance = permutation_importance(
-                final_pipeline,
-                X_test,
-                y_test,
-                n_repeats=30,
-                random_state=42,
-                scoring='roc_auc',
-            )
+        csv_filename = f"{data_dir}/feature_coefficients.csv"
+    importance_df.to_csv(csv_filename, index=False)
 
-            # Create DataFrame for plotting
-            importance_df = pd.DataFrame({
-                'Feature': selected_features,
-                'Importance': perm_importance.importances_mean
-            }).sort_values('Importance', ascending=False)
-
-            # Plot with seaborn
-            plt.figure(figsize=(12, 8))
-            sns.set_style("whitegrid")
-            ax = sns.barplot(x='Importance', y='Feature', data=importance_df.head(20), palette='viridis')
-            ax.set_title(f'Top 20 Permutation Feature Importances - {classifier_type.upper()}', fontsize=16)
-            ax.set_xlabel('Mean Importance', fontsize=14)
-            ax.set_ylabel('Feature', fontsize=14)
-            plt.tight_layout()
-            plt.savefig(f"{graphs_dir}/permutation_importance.png", dpi=300, bbox_inches='tight')
-
-            # Log the figure to MLflow
-            mlflow.log_figure(plt.gcf(), f"{graphs_dir}/permutation_importance.png")
-            plt.close()
-
-            # Also save the full feature importance DataFrame as CSV
-            importance_df.to_csv(f"{data_dir}/permutation_importances.csv", index=False)
-
-            print(f"\nTop 10 most important features (by permutation importance):")
-            print(importance_df.head(10))
-        except Exception as e:
-            print(f"Unable to calculate feature importance.\n{e}")
+    print(f"\nTop 10 most important features overall:") #TODO think metadata colum is including extra features, but might be a data misconfiguration issue
+    if meta_cols is not None:
+        print(importance_df.head(10)[['Feature', importance_column, 'Category']].to_string(index=False))
+    else:
+        print(importance_df.head(10)[['Feature', importance_column]].to_string(index=False))
 
 # Plot calibration curve
 def plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir):

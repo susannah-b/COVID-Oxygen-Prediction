@@ -38,7 +38,7 @@ import warnings
 from functions import basic_train, IntToFloatTransformer, port_in_use, pca_pre_post_fs, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
     plot_pca_predicted, plot_confusion_matrix, plot_fs_performance, plot_decision_distribution, plot_pca_original, \
-    plot_pca_test_unprocessed
+    plot_pca_test_unprocessed, remaining_meta
 import re
 import os
 from datetime import datetime
@@ -48,6 +48,7 @@ import shutil
 import json
 import joblib
 import argparse
+
 # todo clean up at end
 
 #IMPROVE Break script into smaller parts
@@ -104,6 +105,7 @@ model_choice = config['model_building']['specify_model']['model_type'] # Model t
 fs_choice = config['model_building']['specify_model']['fs'] #Feature selector if not basic training # TODO update with best once determined
 max_evals = config['model_building']['max_evals'] # How many evaluations to do in hyperopt tuning
 track_final = config['model_building']['track_final'] # Whether to copy the model_output to the designated folder for easier browsing
+meta_cols = config["general"]["training_meta_cols"]
 
 # Determine which models to test (set in config file)
 Logistic_regression = config['model_building']['models_to_test']['Logistic_regression']
@@ -126,7 +128,9 @@ else: # Put into input storage folder to prevent overwriting
     data_dir = f'inputs/ML/{run_name}/training_data'
 
 # Create output directories for the data
-output_data_dir = f'{data_dir}/ML'
+# output_data_dir = f'{data_dir}/ML'
+output_data_dir = Path("model_output") / f"{run_name}/training_data/ML"  # TODO (also in NN) this is a hack method now relies on track final being made - input storage is deleted so can't be used (and needs copying over to model_storage after model building even if so - probably just require track_final because a few other functions rely on it anyway.
+
 os.makedirs(output_data_dir, exist_ok=True)
 
 # Create output directory for the graphs
@@ -738,6 +742,9 @@ if not args.from_pipeline:
          config["general"]["run_number"] = run_number + 1
          yaml.dump(config, f, sort_keys=False)
      # WARNING: Run name is not automatically imported to external_validation.py if running standalone to allow specific runs to be used. Set manually.
+else:
+    rn1, rn2, rn3 = run_name.split("_")
+    hyperopt_name = f"{rn1}_hyperopt_{rn2}_{rn3}"
 
 ### HYPEROPT TUNING WITH MLFLOW ########################################################################################
 print("\nNow tuning hyperparameters...\n")
@@ -754,7 +761,7 @@ with mlflow.start_run(run_name=hyperopt_name) as run:
     )
     # Print run id
     hyper_run_id = run.info.run_id
-    store_hyp_id = f"Run {run_name} for hyperparameter training completed. Run ID is {hyper_run_id}. See nested runs for individual trials"
+    store_hyp_id = f"Run {run_name} for hyperparameter training completed. Run ID is {hyper_run_id}. See nested runs for individual trials" #TODO should this be hyperopt_run_name not run_name
 
 # Print the best accuracies for each model type
 print("\nHighest model AUROC on train data:")
@@ -963,8 +970,10 @@ with mlflow.start_run(run_name=run_name) as run:
     plot_roc_auc(y_proba, y_test, graphs_dir)
 
     # Plot feature importance
+    meta_col_names = X_test.columns[0:meta_cols].tolist()
+    remaining_meta(meta_col_names, X_test, sample_inves_7=None, graphs_dir=graphs_dir) # Calculate meta columns remaining in order to group features # Note: untested that read in values are correct
     plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, output_data_dir, best_params,
-                            X_test, y_test)
+                            X_test, y_test, meta_cols)
 
     # Plot calibration curve
     plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir)

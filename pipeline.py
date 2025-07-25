@@ -34,7 +34,7 @@ build_ML = config["build_traditional"]
 build_NN = config["build_neural_network"]
 
 # TODO temporary bypass to allow pipeline to be run without imputing
-run_name = "1_0724-234035"
+run_name = "1_0724-234035_TESTING"
 
 ### Create an input folder for the model to store the data
 input_storage_prelim = Path("inputs") # Where feature_engineering.py and data_preprocessing output the data for both models
@@ -97,9 +97,9 @@ if build_ML:
 if build_NN:
     shutil.copytree(model_storage_prelim, model_storage_NN, dirs_exist_ok=True)
 
-# Delete original input folder now it's been copied
-print("Deleting:", model_storage_prelim)
-shutil.rmtree(model_storage_prelim)
+# Delete original input folder now it's been copied #todo temporarily commented out for bypassing imputing
+# print("Deleting:", model_storage_prelim)
+# shutil.rmtree(model_storage_prelim)
 
 #### RUN TRADITIONAL MODEL SCRIPTS #####################################################################################
 if build_ML:
