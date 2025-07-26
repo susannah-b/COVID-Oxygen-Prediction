@@ -22,7 +22,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.model_selection import GroupShuffleSplit
 import os
-import json
 from datetime import datetime
 import yaml
 import shutil

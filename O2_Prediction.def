@@ -1,0 +1,103 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pytorch:24.05-py3
+
+%labels
+    Author Susannah_Blundell
+    Version 1.0
+    Description O2_Prediction ML Pipeline Container with GPU Support
+
+%help
+    This container includes all dependencies for the O2_Prediction ML/NN pipeline.
+
+%post
+    # Update system packages
+    apt-get update && apt-get install -y \
+        build-essential \
+        gcc \
+        g++ \
+        gfortran \
+        pkg-config \
+        git \
+        wget \
+        curl \
+        libgl1-mesa-glx \
+        libglib2.0-0 \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Upgrade pip
+    pip install --upgrade pip setuptools wheel
+
+    # Add cluster-specific dependencies
+    pip install --no-cache-dir \
+        mpi4py \
+        horovod \
+        nvidia-dali-cuda120
+
+    # Install core scientific computing packages
+    pip install --no-cache-dir \
+        numpy \
+        scipy \
+        pandas \
+        matplotlib \
+        seaborn
+
+    # Install scikit-learn and related packages
+    pip install --no-cache-dir \
+        scikit-learn \
+        xgboost \
+        hyperopt
+
+    # Install MLflow for experiment tracking
+    pip install --no-cache-dir mlflow
+
+    # Install missing data handling
+    pip install --no-cache-dir \
+        miceforest \
+        missingno
+
+    # Install statistical packages
+    pip install --no-cache-dir \
+        statsmodels
+
+    # Install SHAP for model interpretability
+    pip install --no-cache-dir shap
+
+    # Install utility packages
+    pip install --no-cache-dir \
+        pyyaml \
+        joblib \
+        tqdm
+
+    # Add cluster-specific dependencies for distributed computing
+    pip install --no-cache-dir \
+        mpi4py
+
+    # Install NVIDIA DALI for accelerated data loading
+    pip install --no-cache-dir \
+        --extra-index-url https://developer.download.nvidia.com/compute/redist \
+        nvidia-dali-cuda120
+
+    # Clean up
+    pip cache purge
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+%environment
+    export LC_ALL=C
+    export CUDA_VISIBLE_DEVICES=0,1
+    export OMP_NUM_THREADS=16
+    export MKL_NUM_THREADS=16
+    export TF_NUM_INTRAOP_THREADS=16
+    export TF_NUM_INTEROP_THREADS=4
+    export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+
+%runscript
+    echo "O2_Prediction Container - Running pipeline script"
+    python "$@"
+
+%files
+    # Add your project files here if needed
+    # ./your_project_directory /opt/o2_prediction
+
+%test
+    python -c "import numpy, pandas, sklearn, torch, mlflow, xgboost; print('All packages imported successfully')"

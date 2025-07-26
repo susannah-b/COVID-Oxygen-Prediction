@@ -1,11 +1,10 @@
 import socket
 import numpy as np
 import pandas as pd
-from sklearn.inspection import permutation_importance
 from sklearn.pipeline import Pipeline
 from sklearn.tree import plot_tree, export_text
-from sklearn.calibration import calibration_curve, CalibrationDisplay
-from sklearn.metrics import accuracy_score, f1_score, brier_score_loss, roc_auc_score
+from sklearn.calibration import CalibrationDisplay
+from sklearn.metrics import accuracy_score, brier_score_loss, roc_auc_score
 from sklearn.model_selection import cross_val_score, StratifiedKFold, learning_curve, LearningCurveDisplay
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.metrics import roc_curve, auc, RocCurveDisplay, precision_recall_curve, average_precision_score, PrecisionRecallDisplay
