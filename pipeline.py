@@ -34,7 +34,7 @@ build_ML = config["build_traditional"]
 build_NN = config["build_neural_network"]
 
 # TODO temporary bypass to allow pipeline to be run without imputing
-run_name = "1_0724-234035_TESTING"
+# run_name = "1_0724-234035_TESTING"
 
 ### Create an input folder for the model to store the data
 input_storage_prelim = Path("inputs") # Where feature_engineering.py and data_preprocessing output the data for both models
@@ -81,14 +81,14 @@ if process.returncode != 0:
     print("Warning: feature_engineering.py failed")
     exit(1)
 
-# TODO temporarily commented out to allow running without imputing
-# # Run data_preprocessing.py - this script splits, normalises, encodes, and imputes the data to prepare the datasets for
-# # model building.
-# process = subprocess.run(['python', 'data_preprocessing.py', '--run_name', run_name, '--from_pipeline'],text=True)
-# # Check if failed
-# if process.returncode != 0:
-#     print("Warning: data_preprocessing.py failed")
-#     exit(1)
+# TODO temporarily comment out this block to allow running without imputing
+# Run data_preprocessing.py - this script splits, normalises, encodes, and imputes the data to prepare the datasets for
+# model building.
+process = subprocess.run(['python', 'data_preprocessing.py', '--run_name', run_name, '--from_pipeline'],text=True)
+# Check if failed
+if process.returncode != 0:
+    print("Warning: data_preprocessing.py failed")
+    exit(1)
 
 ### MOVE FILES TO RELEVANT MODEL FOLDER ################################################################################
 # In order to use the exact same data for preliminary vs ML models, the data needs to be copied into the relevant folder
@@ -96,10 +96,6 @@ if build_ML:
     shutil.copytree(model_storage_prelim, model_storage_ML, dirs_exist_ok=True)
 if build_NN:
     shutil.copytree(model_storage_prelim, model_storage_NN, dirs_exist_ok=True)
-
-# Delete original input folder now it's been copied #todo temporarily commented out for bypassing imputing
-# print("Deleting:", model_storage_prelim)
-# shutil.rmtree(model_storage_prelim)
 
 #### RUN TRADITIONAL MODEL SCRIPTS #####################################################################################
 if build_ML:
@@ -142,3 +138,7 @@ if build_NN:
         if process.returncode != 0:
             print("Warning: external_validation.py failed")
             exit(1)
+
+# Delete original input folder now it's been copied #todo temporarily comment out for bypassing imputing
+print("Deleting:", model_storage_prelim)
+shutil.rmtree(model_storage_prelim)

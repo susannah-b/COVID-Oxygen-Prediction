@@ -172,7 +172,7 @@ mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "173_0724-213446_graphs" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "37_0726-142439_Prettifying" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
@@ -291,11 +291,12 @@ with mlflow.start_run(run_name=val_run_name) as run:
 
     # SHAP
     # WARNING - having issues with 'X does not have valid feature names' - fix if needed but avoid using SHAP graphs for exval if possible.
-    X_data_df = pd.DataFrame(X_data, columns=selected_features)  # Convert back to df for function use
-    explainer = shap.KernelExplainer(model.predict, X_data_df[:10])  # WARNING: As background is done on the same dataset I'm not sure of the validity
-    shap_values = explainer.shap_values(X_data_df, nsamples=100)  # entire dataset
+    X_data_df = pd.DataFrame(X_data, columns=input_features)  # Convert back to df for function use
+    X_data_sf_df = X_data_df[selected_features] # Filter down to processed features
+    explainer = shap.KernelExplainer(model.predict, X_data_sf_df[:10])  # WARNING: As background is done on the same dataset I'm not sure of the validity
+    shap_values = explainer.shap_values(X_data_sf_df, nsamples=100)  # entire dataset
     plt.figure()
-    shap.summary_plot(shap_values, X_data_df, feature_names=selected_features, show=False)
+    shap.summary_plot(shap_values, X_data_sf_df, feature_names=selected_features, show=False)
     plt.tight_layout()
     plt.savefig(f"{graphs_dir}/SHAP_graph.png", dpi=300, bbox_inches='tight')
     plt.close()
@@ -305,23 +306,20 @@ with mlflow.start_run(run_name=val_run_name) as run:
     starting_meta_cols_count = config['general']['training_meta_cols'] - 1  # -1 to exclude label
     meta_cols_before = X_data_df.iloc[:, :starting_meta_cols_count].columns
     protein_cols_before = X_data_df.iloc[:, starting_meta_cols_count:].columns
-    meta_cols_surrey = remaining_meta(meta_cols_before.tolist(), X_data_df, sample_inves_7=False, graphs_dir=None)  # Note: The graph produced here isn't really needed but kept in to visualise selected features
+    meta_cols_surrey = remaining_meta(meta_cols_before.tolist(), X_data_df[selected_features], sample_inves_7=False, graphs_dir=None)  # Note: The graph produced here isn't really needed but kept in to visualise selected features
     metadata_features = selected_features[:meta_cols_surrey]
     proteomics_features = selected_features[meta_cols_surrey:]
 
     # Split SHAP based on class
-    shap_groups = {"Metadata": metadata_features,
-                   "Proteomics data": proteomics_features
-                   }
+    shap_groups = {"Metadata": metadata_features, "Proteomics data": proteomics_features}
     shap_grouped = grouped_shap(shap_values, selected_features, shap_groups)
     plt.figure()
     shap.summary_plot(shap_grouped.values, feature_names=shap_grouped.columns, show=False)
     plt.tight_layout()
     plt.savefig(f"{graphs_dir}/SHAP_graph_grouped.png", dpi=300, bbox_inches='tight')
-    with open(f"{graphs_dir}/SHAP_warning.txt") as f:
-        f.write("Warning: Due to issues with SHAP graph generation, it is recommended to avoid using the external \
-        validation SHAP graphs. If needed, ideally return to the script to fix the issue with feature names.")
-        f.close()
+    with open(f"{graphs_dir}/SHAP_warning.txt", "w") as f:
+        f.write("Warning: Due to issues with SHAP graph generation, it is recommended to avoid using the external "
+                "validation SHAP graphs. If needed, ideally return to the script to fix the issue with feature names.")
     # Plot calibration curve
     classifier_type = 'neural_network'
     plot_calibration_curve(y_proba, y_data, classifier_type, graphs_dir)

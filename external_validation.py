@@ -18,7 +18,7 @@ import os
 
 from functions import port_in_use, pca_pre_post_fs, plot_roc_auc, plot_feature_importance, plot_calibration_curve, \
     plot_decision_tree, plot_precision_recall, plot_pca_predicted, plot_confusion_matrix, plot_pca_original, \
-    plot_pca_test_unprocessed
+    plot_pca_test_unprocessed, remaining_meta
 
 # Set global random seeds
 np.random.seed(42)
@@ -56,6 +56,7 @@ with open(config_path, "r") as f:
 host = config['general']['host']
 port = config['general']['port']
 track_final = config['model_building']['track_final']
+meta_cols = config["general"]["validation_meta_cols"]
 
 ### LOAD ISARIC DATA ###################################################################################################
 # Set input directories
@@ -106,7 +107,7 @@ mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "1_0724-234035_TESTING" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "34_0726-141357_Prettifying" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
@@ -122,6 +123,7 @@ input_features = joblib.load(features_path)
 # Load selected features
 features_path_2 = f"{model_output}/training_data/ML/selected_features.joblib"
 selected_features = joblib.load(features_path_2)
+print(features_path_2)
 
 # Set MLflow logging details
 mlflow.set_experiment("Oxygen Prediction - Validation")
@@ -201,9 +203,12 @@ with mlflow.start_run(run_name=val_run_name) as run:
     # Plot ROC/AUC curves
     plot_roc_auc(y_proba, y_data, graphs_dir)
 
-    # Plot feature importance
+    # Plot feature importance # IMPROVE - don't technically need this for exval as it should be the same
+    meta_col_names = X_data.columns[0:meta_cols].tolist() # todo check this sections calculation is accurate
+    meta_cols = remaining_meta(meta_col_names, X_data[selected_features], sample_inves_7=None, graphs_dir=graphs_dir)  # Calculate meta columns remaining in order to group features # Note: untested that read in values are correct
+    print("SEL FEAT:", len(selected_features))
     plot_feature_importance(classifier_type, model, selected_features, graphs_dir, output_data_dir, model.get_params(),
-                            X_data, y_data)
+                            X_data, y_data, meta_cols)
 
     # Plot calibration curve
     plot_calibration_curve(y_proba, y_data, classifier_type, graphs_dir)

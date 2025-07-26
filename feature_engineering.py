@@ -473,7 +473,7 @@ if regular_meds:
     added_metadata +=  (added_cols - 1)
 
 ### CLEAN UP ISARIC COLUMNS ############################################################################################
-# Rename Columns in the ISARIC dataset to match Surrey (note: only done for those that pass the filtering stage later in the script)
+# Rename Columns in the ISARIC dataset to match Surrey (note: only done for those that pass the filtering stage later in the script) #IMPROVE: this has to be in the same order as merged_isaric (or at least the last column) or remaining_meta won't work
 isaric_cols = {'age_admission' : 'Age',
                'infiltrates_faorres.day1' : 'Bilateral CXR changes', # Infiltrates are determined from x-rays (I believe) so these are somewhat analogous, if imperfect
                'crf1a_o2_cpapv' : 'CPAP',
@@ -487,9 +487,9 @@ isaric_cols = {'age_admission' : 'Age',
                'icu_hoterm' : 'ICU admission',
                'crf1a_com_card_ihd' : 'IHD',
                'crf1a_haema_lymph' : 'Lymphocytes',
+               'crf1a_o2_supp' : 'O2 req.',
                'smoking_mhyn' : 'Smoking Status', # Assumed that the Non/Ex/Current smoker levels correspond to 0/1/2 in Surrey
                'diabetes_type_mhyn' : 'T2DM',
-               'crf1a_o2_supp' : 'O2 req.',
                }
                # Note: Weight is in the PHOSP metadataset, but is NaN for all values. BMI therefore also can't be calculated.
 
@@ -719,7 +719,7 @@ if validate:
         print(f"{len(dropped_isaric)} columns dropped from ISARIC:")
         print(dropped_isaric)
 
-# Calculate how many metadata columns remain and plot with missingno # Note: more columns will be dropped later if not in both datasets, so some columns here may not be in the final metadata columns after all processing
+# Calculate how many metadata columns remain and plot with missingno
 meta_cols_surrey = remaining_meta(meta_cols_names.tolist(), merged_surrey, sample_inves_7, training_graphs)
 meta_cols_isaric = remaining_meta(isaric_cols.values(), merged_isaric, sample_inves_7, validation_graphs)
 

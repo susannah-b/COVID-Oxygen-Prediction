@@ -112,6 +112,24 @@ early_stopping = config['neural_network']['early_stopping'] # Whether to impleme
 validation_size = config['neural_network']['validation_size'] # Proportional size of the validation set for cross validation/early stopping
 use_set_search_space = config['neural_network']['use_set_search_space']
 
+### CREATE RUN NAME ####################################################################################################
+if not args.from_pipeline:
+     # Set run name - when run as part of pipeline.py instead, this is defined as an argument. Here it needs to be set so the model_output folder can be made, etc.
+     timestamp = datetime.now().strftime("%m%d-%H%M%S")
+     run_number = config["general"]["run_number"]
+     run_suffix = config["general"]["run_suffix"] or "Unspecified"  # Set to unspecified if empty
+     run_name = f"{run_number}_{timestamp}_{run_suffix}"  # Unique ID for each model built
+     # Set ID for hyperopt
+     hyperopt_name = f"{run_number}_hyperopt_{timestamp}_{run_suffix}"
+     # Increase the run_name by one for the next run
+     with open(config_path, "w") as f:
+         config["general"]["run_number"] = run_number + 1
+         yaml.dump(config, f, sort_keys=False)
+     # WARNING: Run name is not automatically imported to external_validation.py if running standalone to allow specific runs to be used. Set manually.
+else:
+    rn1, rn2, rn3 = run_name.split("_")
+    hyperopt_name = f"{rn1}_hyperopt_{rn2}_{rn3}"
+
 ### READ IN DATA #######################################################################################################
 # Set pandas to display all columns and longer rows # IMPROVE remove in final version
 pd.set_option('display.max_columns', None)
@@ -124,8 +142,7 @@ else: # Put into input storage folder to prevent overwriting
     data_dir = f'inputs/NN/{run_name}/training_data'
 
 # Create output directories for the data
-# output_data_dir = f'{data_dir}/NN'
-output_data_dir = Path("model_output") / f"{run_name}/training_data/NN"
+output_data_dir = f'{data_dir}/NN'
 os.makedirs(output_data_dir, exist_ok=True)
 
 # Create output directory for the graphs
@@ -730,24 +747,6 @@ else:
 # Set MLFLow tracking URI
 mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 
-### CREATE RUN NAME ####################################################################################################
-if not args.from_pipeline:
-     # Set run name - when run as part of pipeline.py instead, this is defined as an argument. Here it needs to be set so the model_output folder can be made, etc.
-     timestamp = datetime.now().strftime("%m%d-%H%M%S")
-     run_number = config["general"]["run_number"]
-     run_suffix = config["general"]["run_suffix"] or "Unspecified"  # Set to unspecified if empty
-     run_name = f"{run_number}_{timestamp}_{run_suffix}"  # Unique ID for each model built
-     # Set ID for hyperopt
-     hyperopt_name = f"{run_number}_hyperopt_{timestamp}_{run_suffix}"
-     # Increase the run_name by one for the next run
-     with open(config_path, "w") as f:
-         config["general"]["run_number"] = run_number + 1
-         yaml.dump(config, f, sort_keys=False)
-     # WARNING: Run name is not automatically imported to external_validation.py if running standalone to allow specific runs to be used. Set manually.
-else:
-    rn1, rn2, rn3 = run_name.split("_")
-    hyperopt_name = f"{rn1}_hyperopt_{rn2}_{rn3}"
-
 ### HYPEROPT TUNING WITH MLFLOW ########################################################################################
 print("\nNow tuning hyperparameters...\n")
 
@@ -1250,12 +1249,16 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
 
     # Copy final model folder contents
     shutil.copytree(final_folder, output_folder, dirs_exist_ok=True)
+    print(f"\nCopying {final_folder} to {output_folder}")
     # Copy final model artifacts from mlartifacts to the model_output model file
     #  Note: since setting an experiment name changes the artifacts location to mlartifacts instead of in the mlruns (run) folder, we will copy it over for our final output
     shutil.copytree(ml_artifacts, output_artifacts, dirs_exist_ok=True)
+    print(f"Copying {ml_artifacts} to {output_artifacts}")
     # Copy training data and graphs folder
     shutil.copytree(data_folder, output_folder / data_dir, dirs_exist_ok=True)
+    print(f"Copying {graph_folder} to {output_folder / data_dir}")
     shutil.copytree(graph_folder, output_folder / graphs_dir, dirs_exist_ok=True)
+    print(f"Copying {graph_folder} to {output_folder / graphs_dir}\n")
 
     # # Make note of the corresponding hyperopt MLflow run
     hyper_run_file = final_folder / "hyperopt_run_name.txt"

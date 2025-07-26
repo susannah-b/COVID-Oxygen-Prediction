@@ -126,6 +126,12 @@ if drop_metadata:  # Drop the metadata if bool is true
     meta_cols_isaric = 0
     print(f"Metadata was dropped from the ISARIC dataset; if unintended, disable drop_metadata in the script.")
 
+# Update config for later access
+with open(config_path, "w") as f:
+    config["general"]["training_meta_cols"] = meta_cols_surrey
+    config["general"]["validation_meta_cols"] = meta_cols_isaric
+    yaml.dump(config, f, sort_keys=False)
+
 ### HANDLE CATEGORICAL DATA FOR IMPUTATION #############################################################################
 # Detect numeric vs categorical columns
 numeric_cols_s = surrey_X_train.select_dtypes(include='number').columns.tolist()

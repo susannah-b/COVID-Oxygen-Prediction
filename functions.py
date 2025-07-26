@@ -193,10 +193,10 @@ def remaining_meta(meta_columns, merged, sample_inves_7, graphs_dir):
                 print(merged.columns.get_loc(col) + 1)  # +1 for 1-based indexing conversion / allows for splicing where the first number is inclusive and the second exclusive
             meta_cols = merged.columns.get_loc(col) + 1
             break
-    else:
-        if sample_inves_7:
-            print("All metadata columns were removed by the missingness filter.")
-        meta_cols = 0
+        else:
+            if sample_inves_7:
+                print("All metadata columns were removed by the missingness filter.")
+            meta_cols = 0
 
     # Plot missingness after filtering (full dataset)
     if graphs_dir:
