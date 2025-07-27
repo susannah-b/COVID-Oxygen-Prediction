@@ -21,6 +21,7 @@ import re
 import missingno as msno
 import miceforest as mf
 from itertools import repeat, chain
+import os
 
 ### FEATURE ENGINEERING.PY #############################################################################################
 # Check for abnormal SIDs in the data; any unexpected lengths
@@ -331,10 +332,19 @@ def replace_values(df, column_name, original, replacement):
 # Convert categories to pandas categorical - ordinal and nominal
 def convert_categories(dataset, ordinal_cats):
     # Ordinal categories
-    for cat, codes in ordinal_cats.items():
-        if cat in dataset.columns: # Check that the column is present - allows same dict to be used for multiple datasets
-            # Convert to pandas category (ordered)
-            dataset[cat] = pd.Categorical(dataset[cat], categories=codes, ordered=True)
+    # Series conversion
+    if isinstance(dataset, pd.Series):
+        if dataset.name in ordinal_cats:
+            codes = ordinal_cats[dataset.name]
+            dataset = pd.Categorical(dataset, categories=codes, ordered=True)
+        return dataset
+    # Dataframe conversion
+    elif isinstance(dataset, pd.DataFrame):
+        for cat, codes in ordinal_cats.items():
+            if cat in dataset.columns: # Check that the column is present - allows same dict to be used for multiple datasets
+                # Convert to pandas category (ordered)
+                dataset[cat] = pd.Categorical(dataset[cat], categories=codes, ordered=True)
+        return dataset
 
     # Nominal categories - commented out for now as no nominal categories (also check as I realised my encoding above was previously wrong) - function is not updated for this either
     # for cat in nominal_cats.keys():
@@ -372,6 +382,11 @@ def plot_missingness_ms(dataset, graphs_dir, name):
 
 # Impute with miceforest package (MICE imputation)
 def impute_MICE(dataset, filename, datastring, num_datasets, iterations, graphs_dir):
+    # Verify threading environment (for debugging)
+    print(f"Threading environment in Python:") # todo check for hpc - delete later
+    print(f"OMP_NUM_THREADS: {os.environ.get('OMP_NUM_THREADS', 'not set')}")
+    print(f"MKL_NUM_THREADS: {os.environ.get('MKL_NUM_THREADS', 'not set')}")
+
     # Create a dataset to store intermediate columns for missingness handling
     dataset_missing = dataset.copy()
 
@@ -382,31 +397,56 @@ def impute_MICE(dataset, filename, datastring, num_datasets, iterations, graphs_
     dataset_missing = dataset_missing.replace([np.inf, -np.inf], np.nan)
 
     ### MAR Imputation for complete dataset with MICE
+    print(f"Starting MICE imputation with {num_datasets} datasets and {iterations} iterations") # WARNING - hoping to increase these after imputation. mean match, iterations, num_datasets, and n_jobs. also graphs are commented.
+    try:
+        # Initialize kernel (handles categoricals natively)
+        kernel = mf.ImputationKernel(
+            data=dataset_missing,
+            num_datasets=num_datasets,
+            mean_match_candidates=5,
+            random_state=42
+        )
+
+        # Run MICE with explicit single-threading
+        print("Running MICE iterations...")
+        kernel.mice(
+            iterations=iterations,
+            min_data_in_leaf=3,
+            n_jobs=1,  # single threaded
+            random_state=42
+        )
+
+        print("MICE iterations completed successfully")
+
+    except Exception as e:
+        print(f"Error during MICE imputation: {str(e)}")
+        raise
     # Initialize kernel (handles categoricals natively)
-    kernel = mf.ImputationKernel(data=dataset_missing, num_datasets=num_datasets, random_state=42)
+    kernel = mf.ImputationKernel(data=dataset_missing, num_datasets=num_datasets, mean_match_candidates=3, random_state=42)
 
     # Run MICE with 10 iterations
-    kernel.mice(iterations=iterations, min_data_in_leaf=3)
+    import resource
+    kernel.mice(iterations=iterations, min_data_in_leaf=3, n_jobs=1) # WARNING reduced to get it to run
 
-    # Save feature importance plot
-    # todo also tune hyperparameters? would that give better prediction
-    # todo check miceforest usage examples - see github
-    fig1 = kernel.plot_feature_importance(dataset=0) # WARNING - plots are untested - if unnecessary then remove
-    plt.tight_layout()
-    plt.savefig(f'{graphs_dir}/{datastring}_feature_importance_plot.png')
-    plt.close(fig1)
-
-    # Save imputed distributions plot
-    fig2 = kernel.plot_imputed_distributions()
-    plt.tight_layout()
-    plt.savefig(f'{graphs_dir}/{datastring}_imputed_distributions_plot.png')
-    plt.close(fig2)
-
-    # Save mean convergence plot #todo added from documentation so need to check
-    fig3 = kernel.plot_mean_convergence() # todo check it converges
-    plt.tight_layout()
-    plt.savefig(f'{graphs_dir}/{datastring}_mean_convergence_plot.png')
-    plt.close(fig3)
+    # # Save feature importance plot #TODO plots commented again to try and run - issues with threading on HPC
+    # # todo also tune hyperparameters? would that give better prediction
+    # # todo check miceforest usage examples - see github
+    # fig1 = kernel.plot_feature_importance(dataset=0) # WARNING - plots are untested - if unnecessary then remove
+    # plt.tight_layout()
+    # plt.savefig(f'{graphs_dir}/{datastring}_feature_importance_plot.png')
+    # plt.close(fig1)
+    #
+    # # Save imputed distributions plot
+    # fig2 = kernel.plot_imputed_distributions()
+    # plt.tight_layout()
+    # plt.savefig(f'{graphs_dir}/{datastring}_imputed_distributions_plot.png')
+    # plt.close(fig2)
+    #
+    # # Save mean convergence plot #todo added from documentation so need to check
+    # fig3 = kernel.plot_mean_convergence() # todo check it converges
+    # plt.tight_layout()
+    # plt.savefig(f'{graphs_dir}/{datastring}_mean_convergence_plot.png')
+    # plt.close(fig3)
 
     # Return dataset with missing values imputed
     dataset_missing = kernel.complete_data()

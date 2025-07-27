@@ -1,3 +1,23 @@
+# WARNING Temporary fix to run on HPC. Think the issue is the singularity container is set to 16 cores, but MICE hits thread limit.
+#  Can be hopefully deleted or increased after imputed data is obtained.
+import os
+# Set threading variables BEFORE importing any numerical libraries
+# This must happen before numpy, pandas, sklearn, etc. are imported
+threading_vars = {
+    'OMP_NUM_THREADS': '4',
+    'MKL_NUM_THREADS': '4',
+    'OPENBLAS_NUM_THREADS': '4',
+    'NUMEXPR_NUM_THREADS': '4',
+    'BLAS_NUM_THREADS': '4',
+    'LAPACK_NUM_THREADS': '4',
+    'VECLIB_MAXIMUM_THREADS': '4',
+    'NUMBA_NUM_THREADS': '4'
+}
+
+for var, value in threading_vars.items():
+    os.environ[var] = value
+    print(f"Force set {var} = {value}")
+
 ### SCRIPT USAGE #######################################################################################################
 # Run this script to run the entire model pipeline; from raw data to external validation (if enabled). An 'input_storage'
 # folder will be created to store the correct version of the data upon commencing a run, so multiple runs can be completed
@@ -96,7 +116,7 @@ if build_ML:
     shutil.copytree(model_storage_prelim, model_storage_ML, dirs_exist_ok=True)
 if build_NN:
     shutil.copytree(model_storage_prelim, model_storage_NN, dirs_exist_ok=True)
-
+exit(0) #TODO temporarily exiting for HPC usage
 #### RUN TRADITIONAL MODEL SCRIPTS #####################################################################################
 if build_ML:
     print("\n\nBuilding traditional machine learning model...\n")

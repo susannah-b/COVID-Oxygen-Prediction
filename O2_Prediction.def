@@ -78,7 +78,6 @@ From: nvcr.io/nvidia/pytorch:24.05-py3
         nvidia-dali-cuda120
 
     # Clean up
-    pip cache purge
     apt-get clean
     rm -rf /var/lib/apt/lists/*
 

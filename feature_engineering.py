@@ -106,11 +106,11 @@ np.random.seed(42)
 quant_file = Path(__file__).parent / "Surrey_Files" / "KR_Covid_DIA_Pt_gene_Serum30_Report_Protein Quant (Pivot).xls"
 s_meta_file = Path(__file__).parent / "Surrey_Files" / "Surrey_Metadata_master_spreadsheet_130622_edit2.csv"
 isaric_file = Path(__file__).parent / "ISARIC_Files" / "ISARIC.csv"
-phosp_file = Path(__file__).parent / "ISARIC_Files" / "PHOSP Metadata Master.xlsx" # Contains some ISARIC data
+phosp_file = Path(__file__).parent / "ISARIC_Files" / "PHOSP Metadata Master.csv" # Contains some ISARIC data
 quant = pd.read_csv(quant_file, sep='\t').T # Transpose so sample IDs are rows
 s_meta = pd.read_csv(s_meta_file)
 isaric = pd.read_csv(isaric_file, index_col=0) # Avoid creating Unnamed: 0 column
-phosp = pd.read_excel(phosp_file)
+phosp = pd.read_csv(phosp_file, index_col=0, low_memory=False)
 
 # Create output directories for the data
 if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
