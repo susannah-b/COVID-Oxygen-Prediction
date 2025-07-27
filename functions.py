@@ -332,19 +332,10 @@ def replace_values(df, column_name, original, replacement):
 # Convert categories to pandas categorical - ordinal and nominal
 def convert_categories(dataset, ordinal_cats):
     # Ordinal categories
-    # Series conversion
-    if isinstance(dataset, pd.Series):
-        if dataset.name in ordinal_cats:
-            codes = ordinal_cats[dataset.name]
-            dataset = pd.Categorical(dataset, categories=codes, ordered=True)
-        return dataset
-    # Dataframe conversion
-    elif isinstance(dataset, pd.DataFrame):
-        for cat, codes in ordinal_cats.items():
-            if cat in dataset.columns: # Check that the column is present - allows same dict to be used for multiple datasets
-                # Convert to pandas category (ordered)
-                dataset[cat] = pd.Categorical(dataset[cat], categories=codes, ordered=True)
-        return dataset
+    for cat, codes in ordinal_cats.items():
+        if cat in dataset.columns: # Check that the column is present - allows same dict to be used for multiple datasets
+            # Convert to pandas category (ordered)
+            dataset[cat] = pd.Categorical(dataset[cat], categories=codes, ordered=True)
 
     # Nominal categories - commented out for now as no nominal categories (also check as I realised my encoding above was previously wrong) - function is not updated for this either
     # for cat in nominal_cats.keys():

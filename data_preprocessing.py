@@ -187,10 +187,10 @@ nominal_cats = [] # In this case empty, but may not be with other data sets so l
 # For both X_train and X_test (and isaric_X), convert to ordered categorical WITHOUT extracting codes
 
 ### Convert categories to pandas categorical - ordinal and nominal
-# Convert series to frame # todo this only recently errored - hopefully this fix effects nothing but check (update: recommented as it did break!)
-# surrey_y_train = surrey_y_train.to_frame()
-# y_test = y_test.to_frame()
-# isaric_y = isaric_y.to_frame()
+# Convert series to frame
+surrey_y_train = surrey_y_train.to_frame()
+y_test = y_test.to_frame()
+isaric_y = isaric_y.to_frame()
 # Ordinal categories
 surrey_X_train = convert_categories(surrey_X_train, ordinal_cats)
 surrey_y_train = convert_categories(surrey_y_train, ordinal_cats)
@@ -248,6 +248,11 @@ encode_categorical(isaric_X, ordinal_cats)
 
 # Note: This dataset does not currently have any nominal categories, but otherwise one-hot encode here. See mental
 # health data project for an example.
+
+# Convert to series for encoding
+surrey_y_train = surrey_y_train.squeeze()
+y_test = y_test.squeeze()
+isaric_y = isaric_y.squeeze()
 
 # Encode y data
 surrey_y_train = encode_y(surrey_y_train)
