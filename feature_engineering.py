@@ -72,7 +72,10 @@ else:
 # Create config file if it doesn't exist
 default_config = Path("default_config.yaml")
 if not os.path.exists(config_path):
+    print("Feature_engineering.py is creating a new config file.")
     shutil.copy2(default_config, config_path)
+else:
+    print("Feature_engineering.py is using an existing config file.")
 
 # Read config file # IMPROVE Some settings (e.g. training_data directory) could be moved to the config instead of hardcoded. For now only commonly changed settings are added
 with open(config_path, "r") as f:

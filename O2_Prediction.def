@@ -66,7 +66,8 @@ From: nvcr.io/nvidia/pytorch:24.05-py3
     pip install --no-cache-dir \
         pyyaml \
         joblib \
-        tqdm
+        tqdm \
+        threadpoolctl
 
     # Add cluster-specific dependencies for distributed computing
     pip install --no-cache-dir \
@@ -83,20 +84,10 @@ From: nvcr.io/nvidia/pytorch:24.05-py3
 
 %environment
     export LC_ALL=C
-    export CUDA_VISIBLE_DEVICES=0,1
-    export OMP_NUM_THREADS=16
-    export MKL_NUM_THREADS=16
-    export TF_NUM_INTRAOP_THREADS=16
-    export TF_NUM_INTEROP_THREADS=4
-    export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 
 %runscript
     echo "O2_Prediction Container - Running pipeline script"
     python "$@"
-
-%files
-    # Add your project files here if needed
-    # ./your_project_directory /opt/o2_prediction
 
 %test
     python -c "import numpy, pandas, sklearn, torch, mlflow, xgboost; print('All packages imported successfully')"

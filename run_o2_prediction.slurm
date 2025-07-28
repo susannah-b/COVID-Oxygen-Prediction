@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=O2_Prediction
-#SBATCH --partition=hi
+#SBATCH --partition=med
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4 # WARNING - hoping to increase these after imputation
-#SBATCH --mem=120G
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=72G
 #SBATCH --time=72:00:00
 #SBATCH --output=logs/o2_pred_%j.out
 #SBATCH --error=logs/o2_pred_%j.err
-#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-type=FAIL
 
 # Print job information
 echo "Job ID: $SLURM_JOB_ID"
@@ -21,16 +21,9 @@ echo "Working Directory: $(pwd)"
 mkdir -p logs
 
 # Print GPU information
+echo "CPU Information:"
 lscpu
-
-# Set threading limits # WARNING - hoping to increase these after imputation
-export OMP_NUM_THREADS=4
-export MKL_NUM_THREADS=4
-export OPENBLAS_NUM_THREADS=4
-export NUMEXPR_NUM_THREADS=4
-export PYTHONUNBUFFERED=4
-ulimit -s unlimited
-ulimit -u 1029238
+echo ""
 
 # Set matplotlib to non-interactive backend
 export MPLBACKEND=Agg
@@ -57,7 +50,7 @@ echo "Max threads per process: $(cat /proc/sys/kernel/threads-max 2>/dev/null ||
 echo "Starting O2_Prediction pipeline..."
 singularity exec --bind $PROJECT_DIR:/workspace \
     $CONTAINER_PATH \
-    python /workspace/pipeline.py
+    python -u /workspace/pipeline.py
 
 # Check exit status
 if [ $? -eq 0 ]; then

@@ -1,22 +1,22 @@
-# WARNING Temporary fix to run on HPC. Think the issue is the singularity container is set to 16 cores, but MICE hits thread limit.
-#  Can be hopefully deleted or increased after imputed data is obtained.
-import os
-# Set threading variables BEFORE importing any numerical libraries
-# This must happen before numpy, pandas, sklearn, etc. are imported
-threading_vars = {
-    'OMP_NUM_THREADS': '4',
-    'MKL_NUM_THREADS': '4',
-    'OPENBLAS_NUM_THREADS': '4',
-    'NUMEXPR_NUM_THREADS': '4',
-    'BLAS_NUM_THREADS': '4',
-    'LAPACK_NUM_THREADS': '4',
-    'VECLIB_MAXIMUM_THREADS': '4',
-    'NUMBA_NUM_THREADS': '4'
-}
-
-for var, value in threading_vars.items():
-    os.environ[var] = value
-    print(f"Force set {var} = {value}")
+# # WARNING Temporary fix to run on HPC. Think the issue is the singularity container is set to 16 cores, but MICE hits thread limit.
+# #  Can be hopefully deleted or increased after imputed data is obtained.
+# import os
+# # Set threading variables BEFORE importing any numerical libraries
+# # This must happen before numpy, pandas, sklearn, etc. are imported
+# threading_vars = {
+#     'OMP_NUM_THREADS': '4',
+#     'MKL_NUM_THREADS': '4',
+#     'OPENBLAS_NUM_THREADS': '4',
+#     'NUMEXPR_NUM_THREADS': '4',
+#     'BLAS_NUM_THREADS': '4',
+#     'LAPACK_NUM_THREADS': '4',
+#     'VECLIB_MAXIMUM_THREADS': '4',
+#     'NUMBA_NUM_THREADS': '4'
+# }
+#
+# for var, value in threading_vars.items():
+#     os.environ[var] = value
+#     print(f"Force set {var} = {value}")
 
 ### SCRIPT USAGE #######################################################################################################
 # Run this script to run the entire model pipeline; from raw data to external validation (if enabled). An 'input_storage'
@@ -36,10 +36,12 @@ import shutil
 config_path = Path("config.yaml")
 default_config = Path("default_config.yaml")
 if not os.path.exists(config_path):
+    print("No config detected; copying default config.")
     shutil.copy2(default_config, config_path)
 
 # Read in base config file
 with open(config_path, "r") as f:
+    print("Using config found in current working directory.")
     config = yaml.safe_load(f)
 
 ### CREATE DIRECTORY TO STORE DATA INPUTS FOR THIS RUN #################################################################
@@ -79,8 +81,10 @@ if build_NN:
     os.makedirs(model_storage_NN, exist_ok=True)
 
 # Copy config folder to input storage folder and rename
+config_new_prelim = f"{model_storage_prelim}/config.yaml"
 config_new_ML = f"{model_storage_ML}/config.yaml"
 config_new_NN = f"{model_storage_NN}/config.yaml"
+shutil.copy2(config_path, config_new_prelim)
 if build_ML:
     shutil.copy2(config_path, config_new_ML)
 if build_NN:
@@ -116,7 +120,7 @@ if build_ML:
     shutil.copytree(model_storage_prelim, model_storage_ML, dirs_exist_ok=True)
 if build_NN:
     shutil.copytree(model_storage_prelim, model_storage_NN, dirs_exist_ok=True)
-exit(0) #TODO temporarily exiting for HPC usage
+
 #### RUN TRADITIONAL MODEL SCRIPTS #####################################################################################
 if build_ML:
     print("\n\nBuilding traditional machine learning model...\n")

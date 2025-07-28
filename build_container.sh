@@ -26,7 +26,7 @@ if [ $? -eq 0 ]; then
     singularity exec O2_Prediction.sif python -c "
 import torch
 import numpy, pandas, sklearn, xgboost, mlflow, shap, statsmodels
-print('All packages working correctly!')
+print('All packages working correctly')
 print(f'PyTorch version: {torch.__version__}')
 print(f'CUDA available: {torch.cuda.is_available()}')
 if torch.cuda.is_available():
@@ -36,19 +36,14 @@ if torch.cuda.is_available():
 "
 
     if [ $? -eq 0 ]; then
-        echo "Container test passed!"
+        echo "Container test passed"
     else
-        echo "Container test failed!"
+        echo "Container test failed"
         exit 1
     fi
 else
-    echo "Container build failed!"
+    echo "Container build failed"
     exit 1
 fi
 
-echo "Build process completed successfully!"
-echo ""
-echo "Next steps:"
-echo "1. Update the CONTAINER_PATH in run_o2_prediction.slurm"
-echo "2. Update the PROJECT_DIR in run_o2_prediction.slurm"
-echo "3. Submit the job with: sbatch run_o2_prediction.slurm"
+echo "Build process completed successfully"

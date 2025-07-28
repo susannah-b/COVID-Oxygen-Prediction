@@ -10,6 +10,7 @@ import argparse
 import yaml
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 from functions import convert_categories, normalise_MS, impute_MICE, encode_categorical, encode_y, \
     plot_missingness_ms
 
@@ -57,9 +58,8 @@ impute = config['data_preprocessing']['impute'] # Whether to impute (vs load a p
 drop_metadata = config['data_preprocessing']['drop_metadata'] # Whether to drop the metadata from the model
 num_datasets = config['data_preprocessing']['num_datasets_imputation'] # num_datasets for miceforest imputation
 iterations = config['data_preprocessing']['iterations_imputation'] # iterations for miceforest imputation
-
+imputed_data_config = config['data_preprocessing']['imputed_data_config']
 np.random.seed(42)
-
 ### PREPARE THE DATA ###################################################################################################
 
 # Create output directories for the data
@@ -88,8 +88,9 @@ train = pd.read_csv(train_path, index_col=0)
 test = pd.read_csv(test_path, index_col=0)
 full_dataset = pd.read_csv(full_path, index_col=0)
 # ISARIC
-isaric_path = Path(__file__).parent / validation_data / "ISARIC_final.csv"
-isaric = pd.read_csv(isaric_path, index_col=0)
+if validate:
+    isaric_path = Path(__file__).parent / validation_data / "ISARIC_final.csv"
+    isaric = pd.read_csv(isaric_path, index_col=0)
 
 ### SPLIT DATA #########################################################################################################
 # Split train and test data into X and y
@@ -99,21 +100,24 @@ surrey_y_train = train['O2 req.'].copy()
 X_test = test.drop('O2 req.',axis=1)
 y_test = test['O2 req.'].copy()
 # ISARIC
-isaric_X = isaric.drop('O2 req.',axis=1)
-isaric_y = isaric['O2 req.'].copy()
+if validate:
+    isaric_X = isaric.drop('O2 req.',axis=1)
+    isaric_y = isaric['O2 req.'].copy()
 
 # Check data is read in correctly (currently only does train)
 if show_testing:
     print("Surrey data:")
     print(surrey_y_train.head(5)) # Should be a series with SID as indexes, name is correct target variable (O2 req.)
     print(surrey_X_train.iloc[:5, :5]) # Should be a df with SID as indexes, column values look as expected
-    print("ISARIC data:")
-    print(isaric_y.head(5))  # Should be a series with SID as indexes, name is correct target variable (O2 req.)
-    print(isaric_X.iloc[:5, :5])  # Should be a df with SID as indexes, column values look as expected
+    if validate:
+        print("ISARIC data:")
+        print(isaric_y.head(5))  # Should be a series with SID as indexes, name is correct target variable (O2 req.)
+        print(isaric_X.iloc[:5, :5])  # Should be a df with SID as indexes, column values look as expected
 
 ### DETERMINE REMAINING METADATA COLUMNS ###############################################################################
 meta_cols_surrey = config['general']['training_meta_cols'] - 1 # -1 Due to removed of Label (O2 req.) column for X vs y
-meta_cols_isaric = config['general']['validation_meta_cols'] - 1
+if validate:
+    meta_cols_isaric = config['general']['validation_meta_cols'] - 1
 
 # Drop the metadata if enabled # IMPROVE - should this be moved to feature_engineering.py - doesn't affect results but is a bit misleading that the produced data includes metadata there for earlier files
 if drop_metadata:  # Drop the metadata if bool is true
@@ -121,29 +125,33 @@ if drop_metadata:  # Drop the metadata if bool is true
     surrey_X_train = surrey_X_train.iloc[:, meta_cols_surrey:]
     meta_cols_surrey = 0
     print(f"Metadata was dropped from the Surrey dataset; if unintended, disable drop_metadata in the script.")
-    # ISARIC
-    isaric_X = isaric_X.iloc[:, meta_cols_isaric:]
-    meta_cols_isaric = 0
-    print(f"Metadata was dropped from the ISARIC dataset; if unintended, disable drop_metadata in the script.")
+    if validate:
+        # ISARIC
+        isaric_X = isaric_X.iloc[:, meta_cols_isaric:]
+        meta_cols_isaric = 0
+        print(f"Metadata was dropped from the ISARIC dataset; if unintended, disable drop_metadata in the script.")
 
 # Update config for later access
 with open(config_path, "w") as f:
     config["general"]["training_meta_cols"] = meta_cols_surrey
-    config["general"]["validation_meta_cols"] = meta_cols_isaric
+    if validate:
+        config["general"]["validation_meta_cols"] = meta_cols_isaric
     yaml.dump(config, f, sort_keys=False)
 
 ### HANDLE CATEGORICAL DATA FOR IMPUTATION #############################################################################
 # Detect numeric vs categorical columns
 numeric_cols_s = surrey_X_train.select_dtypes(include='number').columns.tolist()
 cat_cols_s = surrey_X_train.select_dtypes(exclude='number').columns.tolist()
-numeric_cols_i = isaric_X.select_dtypes(include='number').columns.tolist()
-cat_cols_i = isaric_X.select_dtypes(exclude='number').columns.tolist()
+if validate:
+    numeric_cols_i = isaric_X.select_dtypes(include='number').columns.tolist()
+    cat_cols_i = isaric_X.select_dtypes(exclude='number').columns.tolist()
 
 if show_testing:
     print("\nNumeric features in Surrey data:", numeric_cols_s)
     print("\nCategorical features in Surrey data:", cat_cols_s)
-    print("\nNumeric features in ISARIC data:", numeric_cols_i)
-    print("\nCategorical features in ISARIC data:", cat_cols_i)
+    if validate:
+        print("\nNumeric features in ISARIC data:", numeric_cols_i)
+        print("\nCategorical features in ISARIC data:", cat_cols_i)
     # TODO still not sure if chol should be in here or not - investigate
 
 # Check which test categories are binary/ordinal - use full dataset to check all regardless of train/test split
@@ -190,39 +198,59 @@ nominal_cats = [] # In this case empty, but may not be with other data sets so l
 # Convert series to frame
 surrey_y_train = surrey_y_train.to_frame()
 y_test = y_test.to_frame()
-isaric_y = isaric_y.to_frame()
+if validate:
+    isaric_y = isaric_y.to_frame()
 # Ordinal categories
 surrey_X_train = convert_categories(surrey_X_train, ordinal_cats)
 surrey_y_train = convert_categories(surrey_y_train, ordinal_cats)
 X_test = convert_categories(X_test, ordinal_cats)
 y_test = convert_categories(y_test, ordinal_cats)
-isaric_X = convert_categories(isaric_X, ordinal_cats)
-isaric_y = convert_categories(isaric_y, ordinal_cats)
+if validate:
+    isaric_X = convert_categories(isaric_X, ordinal_cats)
+    isaric_y = convert_categories(isaric_y, ordinal_cats)
 
 ### NORMALISE PROTEOMICS DATA ########################################################################################## #TODO is it better to impute first?
 surrey_X_train_quant = normalise_MS(surrey_X_train, meta_cols_surrey)
 X_test_quant = normalise_MS(X_test, meta_cols_surrey)
-isaric_X_quant = normalise_MS(isaric_X, meta_cols_isaric)
+if validate:
+    isaric_X_quant = normalise_MS(isaric_X, meta_cols_isaric)
 
 ### IMPUTE MISSING VALUES ##############################################################################################
 # Visualise missing data in the MS data to investigate missingness type
 plot_missingness_ms(surrey_X_train_quant, training_graphs, 'Surrey')
-plot_missingness_ms(isaric_X_quant, validation_graphs, 'ISARIC')
+if validate:
+    plot_missingness_ms(isaric_X_quant, validation_graphs, 'ISARIC')
 
-imputed_surrey_train = f"{training_data}/Surrey_train_after_imputation.csv"
+# Set imputed data file names - Note: modify the 'after_imputation' files in training data if running imputation only, in order to use a specific file for imputation. Set config accordingly. # IMPROVE automate pipeline.py so you can run up to imputation only; perhaps output to another file
+imputed_surrey_train = f"{training_data}/Surrey_train_after_imputation.csv" # TODO could be modified to be automatically selected based on variable - eg whether validate/t2b/D0/drop_meta is true or not. Would need to output certain configurations to /imputed_data automatically with required suffixes
 imputed_surrey_test = f"{training_data}/Surrey_test_after_imputation.csv"
-imputed_isaric = f"{validation_data}/ISARIC_after_imputation.csv"
+if validate:
+    imputed_isaric = f"{validation_data}/ISARIC_after_imputation.csv"
 
 if impute:
     surrey_X_train = impute_MICE(surrey_X_train, imputed_surrey_train, 'Surrey_Train', num_datasets, iterations, training_graphs)
     X_test = impute_MICE(X_test, imputed_surrey_test, 'Surrey_Test', num_datasets, iterations, training_graphs)
-    isaric_X = impute_MICE(isaric_X, imputed_isaric, 'ISARIC',num_datasets , iterations, validation_graphs)
+    if validate:
+        isaric_X = impute_MICE(isaric_X, imputed_isaric, 'ISARIC',num_datasets , iterations, validation_graphs)
 
 else: # If not imputing, read in the data
     print("Skipping imputation; using already produced imputed file. Otherwise set impute = True")
-    surrey_X_train = pd.read_csv(imputed_surrey_train, index_col=0)
-    X_test = pd.read_csv(imputed_surrey_test, index_col=0)
-    isaric_X = pd.read_csv(imputed_isaric, index_col=0)
+    print("WARNING: The imputed data may not reflect the current config: 'validate', day_zero, drop_metadata, and the \
+text-to-binary columns can all alter the present features. Check that the file is correct.")
+    print("Development note: Currently validation is set to true, text2binary all false (due to validaton), day_zero true, and drop_metadata false. To test more options, generate the imputation files or fix the HPC.") #todo delete later
+    # Check for imputed data file
+    imputed_storage = "imputed_data"
+    if not os.path.exists(imputed_storage):
+        os.makedirs(imputed_storage)
+        print("Created imputation data file - copy files with certain configs for [validate/day_zero/text_features(x4)"
+              "/drop_metadata] and append descriptors in order to use certain pre-imputed files for each run.\n e.g."
+              "\"V+-D+-T2B[M-P-C-R-]-M+\" for validate=True, all days, no text to binary conversions for all four features,)"
+              "and keep metadata. Any descriptor can be used, but must be set in config before the run under \"imputed_data_config\"")
+    # Get imputed files from previous runs - note these must be copied over manually
+    surrey_X_train = pd.read_csv(f"{imputed_storage}/Surrey_train_after_imputation{imputed_data_config}.csv", index_col=0)
+    X_test = pd.read_csv(f"{imputed_storage}/Surrey_test_after_imputation{imputed_data_config}.csv", index_col=0)
+    if validate:
+        isaric_X = pd.read_csv(f"{imputed_storage}/ISARIC_after_imputation{imputed_data_config}.csv", index_col=0)
 
 # Convert all categorical types back to pandas categorical
 # WARNING: This might be an issue caused by the temporary imputation I did for ISARIC. Comment this when run with MICE
@@ -244,7 +272,8 @@ else: # If not imputing, read in the data
 ### ENCODE CATEGORICAL DATA ############################################################################################
 encode_categorical(surrey_X_train, ordinal_cats)
 encode_categorical(X_test, ordinal_cats)
-encode_categorical(isaric_X, ordinal_cats)
+if validate:
+    encode_categorical(isaric_X, ordinal_cats)
 
 # Note: This dataset does not currently have any nominal categories, but otherwise one-hot encode here. See mental
 # health data project for an example.
@@ -252,12 +281,14 @@ encode_categorical(isaric_X, ordinal_cats)
 # Convert to series for encoding
 surrey_y_train = surrey_y_train.squeeze()
 y_test = y_test.squeeze()
-isaric_y = isaric_y.squeeze()
+if validate:
+    isaric_y = isaric_y.squeeze()
 
 # Encode y data
 surrey_y_train = encode_y(surrey_y_train)
 y_test = encode_y(y_test)
-isaric_y = encode_y(isaric_y)
+if validate:
+    isaric_y = encode_y(isaric_y)
 
 ### SAVE DATA ##########################################################################################################
 # Write to csv for use in next script
@@ -265,8 +296,9 @@ surrey_X_train.to_csv(f"{training_data}/Surrey_X_train.csv", sep=",", index=True
 surrey_y_train.to_csv(f"{training_data}/Surrey_y_train.csv", sep=",", index=True)
 X_test.to_csv(f"{training_data}/Surrey_X_test.csv", sep=",", index=True)
 y_test.to_csv(f"{training_data}/Surrey_y_test.csv", sep=",", index=True)
-isaric_X.to_csv(f"{validation_data}/ISARIC_X.csv", sep=",", index=True)
-isaric_y.to_csv(f"{validation_data}/ISARIC_y.csv", sep=",", index=True)
+if validate:
+    isaric_X.to_csv(f"{validation_data}/ISARIC_X.csv", sep=",", index=True)
+    isaric_y.to_csv(f"{validation_data}/ISARIC_y.csv", sep=",", index=True)
 
 # Close all figures
 plt.close('all')

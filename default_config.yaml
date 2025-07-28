@@ -36,12 +36,16 @@ feature_engineering:
     # Minimum count for text features to be included in the dataset. If set to 0, all text features will be included.
 
 data_preprocessing:
-  impute: True
+  impute: False # Disabled due to computational restrictions but should be set to true. 
     # Determine whether to impute the data or not; if running standalone scripts (not in pipeline.py) this can be switched off for repeat runs
   drop_metadata: False
     # Determine whether to drop the metadata; i.e. only use proteomics data. 
   num_datasets_imputation: 10
   iterations_imputation: 10
+  imputed_data_config: ''
+  # Optional term which can be manually (for now) appended to the '[...]_after_imputation.csv' file to indicate the config used for imputation. 
+  # If changing validate/day_zero/drop_metadata or any text_features, you can modify the aforementioned file with a suffix and write above to specify which to use.
+  # Suggested template: '_V+-D+-T2B[M-P-C-R-]-M+'
 
 model_building:
   var_threshold: 1e-10
@@ -68,7 +72,7 @@ model_building:
     SFS_LR: False
     SFS_LSVC: False
     SFS_XGB: False
-    NONE: False
+    NONE: True
     # Whether to include each feature selector as a possible candidate for basic_training
   models_to_test:
     # Models to test as part of basic_train; determines which will be carried to the tuning stage
