@@ -42,6 +42,7 @@ import shutil
 import json
 import joblib
 import argparse
+from mlflow.tracking import MlflowClient
 
 # todo clean up at end
 
@@ -109,6 +110,7 @@ AdaBoost = config['model_building']['models_to_test']['AdaBoost']
 Gradient_boosting = config['model_building']['models_to_test']['Gradient_boosting']
 XGBoost = config['model_building']['models_to_test']['XGBoost']
 KNN = config['model_building']['models_to_test']['KNN']
+enable_tracking = config['general']['enable_tracking']
 
 ### CREATE RUN NAME ####################################################################################################
 if not args.from_pipeline:
@@ -125,7 +127,10 @@ if not args.from_pipeline:
          yaml.dump(config, f, sort_keys=False)
      # WARNING: Run name is not automatically imported to external_validation.py if running standalone to allow specific runs to be used. Set manually.
 else:
-    rn1, rn2, rn3 = run_name.split("_")
+    rn_components = run_name.split("_")
+    rn1 = rn_components[0]
+    rn2 = rn_components[1]
+    rn3 = '_'.join(rn_components[2:])
     hyperopt_name = f"{rn1}_hyperopt_{rn2}_{rn3}"
 
 ### READ IN DATA #######################################################################################################
@@ -727,17 +732,19 @@ search_space = hp.choice('classifier_type', best_spaces)
 # Make folder for tracking runs
 os.makedirs('./mlruns', exist_ok=True)
 
-if not port_in_use(host, port):
-    print(f"Running tracking server on {host}:{port}")
-    subprocess.Popen(["mlflow", "server", "--backend-store-uri", "./mlruns", "--host", host, "--port", f"{port}"])
-else:
-    print(f"MLflow tracking server already listening on {host}:{port}")
+if enable_tracking:
+    if not port_in_use(host, port):
+        print(f"Running tracking server on {host}:{port}")
+        subprocess.Popen(["mlflow", "server", "--backend-store-uri", "./mlruns", "--host", host, "--port", f"{port}"])
+    else:
+        print(f"MLflow tracking server already listening on {host}:{port}")
 
-# Pause to allow the server to boot up
-    time.sleep(5)
+    # Pause to allow the server to boot up
+        time.sleep(5)
 
 # Set MLFLow tracking URI
-mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
+if enable_tracking:
+    mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 
 ### HYPEROPT TUNING WITH MLFLOW ########################################################################################
 print("\nNow tuning hyperparameters...\n")
@@ -769,7 +776,25 @@ print(best_config_df)
 
 ### TRAIN FINAL MODEL ##################################################################################################
 # Create a new MLflow Experiment
-mlflow.set_experiment("Oxygen Prediction Traditional ML - Surrey")
+if enable_tracking: # Have to use a unique name or it creates issues with artifact tracking
+    exp_name = "Oxygen Prediction Traditional ML - Surrey"
+else:
+    exp_name = "Oxygen Prediction Traditional ML - Surrey - Offline"
+
+artifact_path = f"mlartifacts"
+os.makedirs(artifact_path, exist_ok=True)
+client = MlflowClient()
+existing_experiment = client.get_experiment_by_name(exp_name)
+
+# Create new experiment if it doesn't exist
+if existing_experiment is None:
+    print(f"Creating new experiment for {exp_name}")
+    client.create_experiment(name=exp_name, artifact_location=artifact_path)
+else:
+    print(f"Using existing experiment for {exp_name}")
+
+mlflow.set_experiment(exp_name)
+
 
 # Train final model using the full training data
 mlflow.sklearn.autolog()
@@ -894,12 +919,14 @@ with mlflow.start_run(run_name=run_name) as run:
     with open(f"{output_data_dir}/selected_features.json", "w") as f:
         json.dump(selected_features, f)
     joblib.dump(selected_features, f"{output_data_dir}/selected_features.joblib")
+    print(f"output data dir {output_data_dir} should be training_data/ML")
     ### Log the final pipeline model
     # Create input example
     input_example = X_train.iloc[:1]
     # Infer model signature
     signature = infer_signature(X_train, final_pipeline.predict(X_train))
-    mlflow.sklearn.log_model(final_pipeline, "best_model", signature=signature, input_example=input_example)
+    model_info = mlflow.sklearn.log_model(final_pipeline, "best_model", signature=signature, input_example=input_example)
+    model_id = model_info.model_uuid # Get model ID to copy over if in HPC
 
     # Evaluate the final model on the test set
     y_pred = final_pipeline.predict(X_test)
@@ -991,8 +1018,9 @@ with mlflow.start_run(run_name=run_name) as run:
     store_final_id = f"Run {run_name} for the final traditional machine learning model completed. Run ID is {final_run_id}"
 
     # Log artifacts
-    mlflow.log_artifacts(graphs_dir, artifact_path="graphs")
-    mlflow.log_artifacts(output_data_dir, artifact_path="tables")
+    if enable_tracking:
+        mlflow.log_artifacts(graphs_dir, artifact_path="graphs")
+        mlflow.log_artifacts(output_data_dir, artifact_path="tables")
     #todo also log metric test accuracy, f1, anything else I generate
 
     ### SAVE DATA FOR ADDITIONAL GRAPHS ################################################################################
@@ -1012,24 +1040,30 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
 
     # Determine file locations
     final_folder = Path("mlruns") / final_exp_id / final_run_id
-    ml_artifacts = Path("mlartifacts") / final_exp_id / final_run_id
+    ml_artifacts = Path("mlartifacts") / final_run_id
     output_folder = Path("model_output") / run_name
-    output_artifacts = output_folder
+    output_artifacts = output_folder #IMPROVE (and in NN) - remove or improve as currently not needed
     data_folder = Path(data_dir)
     graph_folder = Path(graphs_dir)
 
-    # Copy final model folder contents
+    # Copy final model folder contents # TODO not sure if an mlflow or data copying issue, but when enable_tracking is disabled there is some convoluted file structures in model_output
     shutil.copytree(final_folder, output_folder, dirs_exist_ok=True)
     print(f"\nCopying {final_folder} to {output_folder}")
-    # Copy final model artifacts from mlartifacts to the model_output model file
+    # Copy final model artifacts from mlartifacts to the model_output model file # IMPROVE - revamp for enable_tracking false so the file structure is the same (either use mlartifacts for local or /artifacts for remote tracking)
     #  Note: since setting an experiment name changes the artifacts location to mlartifacts instead of in the mlruns (run) folder, we will copy it over for our final output
     shutil.copytree(ml_artifacts, output_artifacts, dirs_exist_ok=True)
     print(f"Copying {ml_artifacts} to {output_artifacts}")
     # Copy training data and graphs folder
-    shutil.copytree(data_folder, output_folder / data_dir, dirs_exist_ok=True)
-    print(f"Copying {data_folder} to {output_folder / data_dir}")
-    shutil.copytree(graph_folder, output_folder / graphs_dir, dirs_exist_ok=True)
-    print(f"Copying {graph_folder} to {output_folder / graphs_dir}\n")
+    shutil.copytree(data_folder, output_folder / "training_data", dirs_exist_ok=True) #IMPROVE more elegant
+    print(f"Copying {data_folder} to {output_folder}/training_data")
+    shutil.copytree(graph_folder, output_folder / "training_graphs", dirs_exist_ok=True)
+    print(f"Copying {graph_folder} to {output_folder}/training_graphs\n")
+
+    # For HPC use - copy model folder over (instead of logging to best_model in artifacts, it saves the contents to mlartifacts/models/m-{run_id}/artifacts
+    faulty_bm_path = Path("mlartifacts") / "models" / f"{model_id}" / "artifacts"
+    if os.path.exists(faulty_bm_path):
+        shutil.copytree(faulty_bm_path, f"{output_artifacts}/artifacts/best_model", dirs_exist_ok=True)
+        print(f"For HPC: Copying {faulty_bm_path} to {output_artifacts}/artifacts/best_model\n")
 
     # Make note of the corresponding hyperopt MLflow run
     hyper_run_file = final_folder / "hyperopt_run_name.txt"

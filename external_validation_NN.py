@@ -1,7 +1,5 @@
 import torch
 import torch.nn as nn
-from skorch import NeuralNetClassifier
-from skorch.callbacks import Callback
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -45,6 +43,7 @@ import argparse
 from sklearn.metrics import confusion_matrix, classification_report
 import shap
 from sklearn.base import clone
+from mlflow.tracking import MlflowClient
 
 ### SET RANDOM SEEDS ###################################################################################################
 # Set global random seeds
@@ -87,6 +86,7 @@ with open(config_path, "r") as f:
 host = config['general']['host']
 port = config['general']['port']
 track_final = config['model_building']['track_final']
+enable_tracking = config['general']['enable_tracking']
 
 ### LOAD IN VALIDATION DATA ############################################################################################
 # Set input directories
@@ -166,13 +166,14 @@ else:
 # Pause to allow the server to boot up
     time.sleep(5)
 
-# Set tracking URI
-mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
+# Set MLFLow tracking URI
+if enable_tracking:
+    mlflow.set_tracking_uri(uri=f"http://{host}:{port}")
 
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "37_0726-142439_Prettifying" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "15_0729-160809_HPC" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
@@ -190,7 +191,24 @@ features_path_2 = f"{model_output}/training_data/NN/selected_features.joblib"
 selected_features = joblib.load(features_path_2)
 
 # Set MLflow logging details
-mlflow.set_experiment("Oxygen Prediction - Validation")
+if enable_tracking: # Have to use a unique name or it creates issues with artifact tracking
+    exp_name = "Oxygen Prediction NN Validation - Surrey"
+else:
+    exp_name = "Oxygen Prediction NN Validtion- Surrey - Offline"
+
+artifact_path = f"mlartifacts"
+os.makedirs(artifact_path, exist_ok=True)
+client = MlflowClient()
+existing_experiment = client.get_experiment_by_name(exp_name)
+
+# Create new experiment if it doesn't exist
+if existing_experiment is None:
+    print(f"Creating new experiment for {exp_name}")
+    client.create_experiment(name=exp_name, artifact_location=artifact_path)
+else:
+    print(f"Using existing experiment for {exp_name}")
+
+mlflow.set_experiment(exp_name)
 
 ### PREPARE DATA #######################################################################################################
 # Filter validation data to the original features
@@ -338,8 +356,9 @@ with mlflow.start_run(run_name=val_run_name) as run:
     store_val_id = f"Run {val_run_name} for validation predictions completed. Run ID is {val_run_id}"
 
     # Log artifacts
-    mlflow.log_artifacts(graphs_dir, artifact_path="val_graphs")
-    mlflow.log_artifacts(data_dir, artifact_path="val_tables")
+    if enable_tracking:
+        mlflow.log_artifacts(graphs_dir, artifact_path="val_graphs")
+        mlflow.log_artifacts(data_dir, artifact_path="val_tables")
 
 ### STORE RESULTS IN NEW FOLDER ########################################################################################
 # Move and rename runs to a new directory for easier examination - results are copied from the MLflow tracking folder
@@ -350,7 +369,7 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
 
     # Determine file locations
     val_folder = Path("mlruns")  / val_exp_id / val_run_id
-    ml_artifacts = Path("mlartifacts") / val_exp_id / val_run_id # Find artifacts for current run
+    ml_artifacts = Path("mlartifacts")  / val_run_id # Find artifacts for current run
     output_folder = Path(f"{model_output}/external_validation") # Put within original model folder under external_validation
     output_artifacts = output_folder
     data_folder = Path(data_dir)
@@ -358,12 +377,16 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
 
     # Copy final model folder contents
     shutil.copytree(val_folder, output_folder, dirs_exist_ok=True)
+    print(f"\nCopying {val_folder} to {output_folder}")
     # Copy validation model artifacts from mlartifacts to the model_output external validation file
         #  Note: since setting an experiment name changes the artifacts location to mlartifacts instead of in the mlruns (run) folder, we will copy it over for our final output
     shutil.copytree(ml_artifacts, output_artifacts, dirs_exist_ok=True)
+    print(f"Copying {ml_artifacts} to {output_artifacts}")
     # Copy training data and graphs folder
-    shutil.copytree(data_folder, output_folder / data_dir, dirs_exist_ok=True)
-    shutil.copytree(graph_folder, output_folder / graphs_dir, dirs_exist_ok=True)
+    shutil.copytree(data_folder, output_folder / "training_data", dirs_exist_ok=True)  # IMPROVE more elegant
+    print(f"Copying {data_folder} to {output_folder}/training_data")
+    shutil.copytree(graph_folder, output_folder / "training_graphs", dirs_exist_ok=True)
+    print(f"Copying {graph_folder} to {output_folder}/training_graphs\n")
 
     # Read in key metrics from training and update for validation
     key_metrics_path = f"{model_output}/key_metrics_{model_name}.csv"

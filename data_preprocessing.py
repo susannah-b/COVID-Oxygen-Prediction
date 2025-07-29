@@ -251,23 +251,14 @@ text-to-binary columns can all alter the present features. Check that the file i
     X_test = pd.read_csv(f"{imputed_storage}/Surrey_test_after_imputation{imputed_data_config}.csv", index_col=0)
     if validate:
         isaric_X = pd.read_csv(f"{imputed_storage}/ISARIC_after_imputation{imputed_data_config}.csv", index_col=0)
-
-# Convert all categorical types back to pandas categorical
-# WARNING: This might be an issue caused by the temporary imputation I did for ISARIC. Comment this when run with MICE
-#  to check if it still applies and if it doesn't, delete this. (also adapt for surrey_X_train, X_test, and isaric_X
-# Convert to numerical or categorical
-# for col in ordinal_cats:
-#     if col in X_train:
-#         X_train[col] = X_train[col].astype('category')
-#
-# # Check columns are correctly imputed for categorical data
-# if show_testing:
-#     for cat in ordinal_cats:
-#         if cat in X_train.columns:  # Check that the column is present - allows same dict to be used for multiple datasets
-#             print(f"\nUnique values in X_train {cat}: {X_train[cat].unique()}")
-#             if not validate:
-#                 print(f"Unique values in X_test {cat}: {X_test[cat].unique()}")
-#                 # Should look the same as before imputation (probably unecessary testing now code is defined but leaving in)
+    # Convert all categorical types back to pandas categorical once loaded in
+    surrey_X_train = convert_categories(surrey_X_train, ordinal_cats)
+    surrey_y_train = convert_categories(surrey_y_train, ordinal_cats)
+    X_test = convert_categories(X_test, ordinal_cats)
+    y_test = convert_categories(y_test, ordinal_cats)
+    if validate:
+        isaric_X = convert_categories(isaric_X, ordinal_cats)
+        isaric_y = convert_categories(isaric_y, ordinal_cats)
 
 ### ENCODE CATEGORICAL DATA ############################################################################################
 encode_categorical(surrey_X_train, ordinal_cats)

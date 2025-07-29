@@ -22,6 +22,8 @@ general:
     # Host and port for local tracking serverfor MLflow
   training_meta_cols: 0
   validation_meta_cols: 0
+  enable_tracking: False
+    # If true, will enable the tracking server for MLflow. Set to false if using a VPN service/other restrictions or the code will not run.
 
 feature_engineering:
   day_zero: True
