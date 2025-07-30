@@ -27,7 +27,7 @@ import yaml
 import shutil
 from functions import check_abnormal_SIDs, calculate_overlaps, check_columns, check_empty_cols, \
     plot_row_missingness, plot_missingness_msno, investigate_null, remaining_meta, categorise_cols, numerical_check_nan, \
-    plot_class_distribution, text_to_binary, replace_values
+    plot_class_distribution, text_to_binary, replace_values, set_graph_style
 
 # Set pandas to display all columns and longer rows # IMPROVE remove in final version
 pd.set_option('display.max_columns', None)
@@ -43,6 +43,9 @@ sample_inves_6 = False # Data cleaning results within columns
 sample_inves_7 = False # Missingness
 sample_inves_8 = False # Numerical conversion
 sample_inves_9 = False # Dropped colums
+
+# Apply graph styles
+set_graph_style()
 
 ### ARGPARSE TO SET RUN NAME ###########################################################################################
   # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)

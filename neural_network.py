@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 from functions import port_in_use, pca_pre_post_fs, plot_learning_curve, \
     plot_roc_auc, plot_calibration_curve, plot_precision_recall, \
     plot_pca_predicted, plot_confusion_matrix, plot_decision_distribution, remaining_meta, grouped_shap, \
-    plot_pca_original, plot_pca_test_unprocessed
+    plot_pca_original, plot_pca_test_unprocessed, set_graph_style
 import os
 from datetime import datetime
 import subprocess
@@ -40,10 +40,14 @@ from sklearn.metrics import confusion_matrix, classification_report
 from sklearn.base import clone
 import shap
 from mlflow.tracking import MlflowClient
+
 # todo clean up at end
 
 # Bool to show additional detail
 show_detail = False
+
+# Apply graph styles
+set_graph_style()
 
 ### SET RANDOM SEEDS ###################################################################################################
 # Function to set random seeds - certain operations advance random state, and due to the small dataset I've found better results (on both test and exval) with certain seeds
@@ -162,7 +166,7 @@ y_test = y_test.astype(np.float32)
 
 # Print summary
 print(f"Total training samples: {len(X_train_full)} | Test samples: {len(X_test)}")
-print(f"Feature dimensions: {X_train_full.shape[1]} | Classes: {y_train.nunique()}")
+print(f"Feature dimensions: {X_train_full.shape[1]} | Classes: {y_train.nunique()}\n")
 
 # Do test/validation split for the early stopping check (final model is trained on X_train_full)
 X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=validation_size, stratify=y_train_full, random_state=42)
@@ -499,6 +503,7 @@ criterion = nn.BCEWithLogitsLoss()  # Binary Cross Entropy with built-in sigmoid
   # IMPROVE: This is used to be similar in structure to the traditional model; could be used after a similar basic_train
   #  function is implemented. For now, just stores best result for the defined model
 classifier_type = 'neural_network'
+type_translation = {'nn': 'Neural network'} # To use in graphs
 
 # Dictionary to store the best model accuracies
 best_roc = {
@@ -860,9 +865,6 @@ with mlflow.start_run(run_name=run_name) as run:
     mlflow.log_param("mlflow_run_name", run.info.run_name)
     final_exp_id = run.info.experiment_id # Get experiment id for folder management
 
-    # Extract the best classifier type #IMPROVE not needed for current NN code
-    classifier_type = 'neural_network'
-
     # Get parameters for the classifier and feature selector
     fs_params = best_config.get('fs_params', {})  # Feature selector params
     # Convert to integers where needed
@@ -1217,7 +1219,7 @@ with mlflow.start_run(run_name=run_name) as run:
     plot_precision_recall(y_proba, y_test, graphs_dir)
 
     # Plot calibration curve
-    plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir)
+    plot_calibration_curve(y_proba, y_test, type_translation[classifier_type], graphs_dir)
 
     # Plot decision distribution
     plot_decision_distribution(y_proba, y_test, graphs_dir)

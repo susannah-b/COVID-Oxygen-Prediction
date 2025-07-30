@@ -1,23 +1,3 @@
-# # WARNING Temporary fix to run on HPC. Think the issue is the singularity container is set to 16 cores, but MICE hits thread limit.
-# #  Can be hopefully deleted or increased after imputed data is obtained.
-# import os
-# # Set threading variables BEFORE importing any numerical libraries
-# # This must happen before numpy, pandas, sklearn, etc. are imported
-# threading_vars = {
-#     'OMP_NUM_THREADS': '4',
-#     'MKL_NUM_THREADS': '4',
-#     'OPENBLAS_NUM_THREADS': '4',
-#     'NUMEXPR_NUM_THREADS': '4',
-#     'BLAS_NUM_THREADS': '4',
-#     'LAPACK_NUM_THREADS': '4',
-#     'VECLIB_MAXIMUM_THREADS': '4',
-#     'NUMBA_NUM_THREADS': '4'
-# }
-#
-# for var, value in threading_vars.items():
-#     os.environ[var] = value
-#     print(f"Force set {var} = {value}")
-
 ### SCRIPT USAGE #######################################################################################################
 # Run this script to run the entire model pipeline; from raw data to external validation (if enabled). An 'input_storage'
 # folder will be created to store the correct version of the data upon commencing a run, so multiple runs can be completed
@@ -54,9 +34,6 @@ run_suffix = config["general"]["run_suffix"] or "Unspecified" # Set to unspecifi
 run_name = f"{run_number}_{timestamp}_{run_suffix}" # Unique ID for each model built
 build_ML = config["build_traditional"]
 build_NN = config["build_neural_network"]
-
-# TODO temporary bypass to allow pipeline to be run without imputing
-# run_name = "1_0724-234035_TESTING"
 
 ### Create an input folder for the model to store the data
 input_storage_prelim = Path("inputs") # Where feature_engineering.py and data_preprocessing output the data for both models
@@ -105,7 +82,6 @@ if process.returncode != 0:
     print("Warning: feature_engineering.py failed")
     exit(1)
 
-# TODO temporarily comment out this block to allow running without imputing
 # Run data_preprocessing.py - this script splits, normalises, encodes, and imputes the data to prepare the datasets for
 # model building.
 process = subprocess.run(['python', 'data_preprocessing.py', '--run_name', run_name, '--from_pipeline'],text=True)
@@ -163,6 +139,6 @@ if build_NN:
             print("Warning: external_validation.py failed")
             exit(1)
 
-# Delete original input folder now it's been copied #todo temporarily comment out for bypassing imputing
+# Delete original input folder now it's been copied
 print("Deleting:", model_storage_prelim)
 shutil.rmtree(model_storage_prelim)

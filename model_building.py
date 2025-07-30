@@ -33,7 +33,7 @@ import warnings
 from functions import basic_train, IntToFloatTransformer, port_in_use, pca_pre_post_fs, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
     plot_pca_predicted, plot_confusion_matrix, plot_fs_performance, plot_decision_distribution, plot_pca_original, \
-    plot_pca_test_unprocessed, remaining_meta
+    plot_pca_test_unprocessed, remaining_meta, set_graph_style
 import os
 from datetime import datetime
 import subprocess
@@ -58,6 +58,9 @@ show_detail = False
 
 # Random seed
 np.random.seed(42)
+
+# Set graph style
+set_graph_style()
 
 ### ARGPARSE TO SET RUN NAME ###########################################################################################
   # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
@@ -169,7 +172,7 @@ X_test = pd.read_csv(X_path, index_col=0)
 y_test = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
 
 print(f"Training samples: {len(X_train)} | Test samples: {len(X_test)}")
-print(f"Feature dimensions: {X_train.shape[1]} | Classes: {y_train.nunique()}")
+print(f"Feature dimensions: {X_train.shape[1]} | Classes: {y_train.nunique()}\n")
 
 # TODO: Note that some isaric columns were selected that might be innaccurate (eg day 1 x ray infiltrates as analogous to Bilateral CXR changes
 #  in Surrey data. It would be worth experimenting with dropping some of these here to see if the model improves (although if not feature-selected
@@ -453,6 +456,8 @@ best_roc = {
     'knn': 0.0
 }
 
+# Conversion to longer format # Note: to change this you need to change the format of the top model scores in basic train (i.e the model cell)
+# Conversion to longer format # Note: to change this you need to change the format of the top model scores in basic train (i.e the model cell)
 type_translation = { # IMPROVE could just use the full name for simplicity and remove this
     'svm': 'Support Vector Classifier',
     'rf': 'RandomForestClassifier',
@@ -569,7 +574,6 @@ selector_param_spaces = { # Note: for new data, values may need to be tweaked as
         'min_features_to_select': hp.quniform('rfecv_min_feat', 5, 30, 1)
     },
     'SFM_XGB': {
-        'max_features': hp.uniform('xgb_max_feat', 0.1, 1.0),
         'threshold': hp.choice('xgb_threshold', ['median', 0.5, 1.0])
     },
     'RFECV_LR': {
@@ -748,7 +752,6 @@ if enable_tracking:
 
 ### HYPEROPT TUNING WITH MLFLOW ########################################################################################
 print("\nNow tuning hyperparameters...\n")
-
 mlflow.set_experiment("Oxygen Prediction - Hyperparams") # Note: Could use same experiment ID as the final model in order to compare; for now I find it easier to keep them separate.
 with mlflow.start_run(run_name=hyperopt_name) as run:
     mlflow.set_tag("Phase", "Hyperopt parameter tuning")
@@ -919,7 +922,6 @@ with mlflow.start_run(run_name=run_name) as run:
     with open(f"{output_data_dir}/selected_features.json", "w") as f:
         json.dump(selected_features, f)
     joblib.dump(selected_features, f"{output_data_dir}/selected_features.joblib")
-    print(f"output data dir {output_data_dir} should be training_data/ML")
     ### Log the final pipeline model
     # Create input example
     input_example = X_train.iloc[:1]
@@ -995,7 +997,7 @@ with mlflow.start_run(run_name=run_name) as run:
                             X_test, y_test, meta_cols)
 
     # Plot calibration curve
-    plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir)
+    plot_calibration_curve(y_proba, y_test, type_translation[classifier_type], graphs_dir)
 
     # Plot decision distribution
     plot_decision_distribution(y_proba, y_test, graphs_dir)

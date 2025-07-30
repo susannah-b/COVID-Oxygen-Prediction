@@ -19,10 +19,13 @@ from mlflow.tracking import MlflowClient
 
 from functions import port_in_use, pca_pre_post_fs, plot_roc_auc, plot_feature_importance, plot_calibration_curve, \
     plot_decision_tree, plot_precision_recall, plot_pca_predicted, plot_confusion_matrix, plot_pca_original, \
-    plot_pca_test_unprocessed, remaining_meta
+    plot_pca_test_unprocessed, remaining_meta, set_graph_style
 
 # Set global random seeds
 np.random.seed(42)
+
+# Apply graph styles
+set_graph_style()
 
 ### ARGPARSE TO SET RUN NAME ###########################################################################################
   # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
@@ -84,7 +87,7 @@ y_path = Path(__file__).parent / data_dir / f"{dataset}_y.csv"
 X_data = pd.read_csv(X_path, index_col=0)
 y_data = pd.read_csv(y_path, index_col=0)
 
-# Ensure y_data is a 1-D Series #TODO why do i need to do this for exval but not m_b?
+# Ensure y_data is a 1-D Series
 y_data = y_data.reset_index(drop=True).squeeze() # Convert to a series to avoid an issue with plot_pca_predicted
 
 print(f"Validation samples: {len(X_data)}")
@@ -111,11 +114,11 @@ if enable_tracking:
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "15_0729-160809_HPC" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "18_0729-234816_HPC" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
-# Load model by run ID # TODO - think this should be changed to the mlruns file as model_output isn't always made
+# Load model by run ID
 model_output = f"model_output/{model_name}"
 model_path = f"{model_output}/artifacts/best_model"
 model = mlflow.sklearn.load_model(model_path)
@@ -161,6 +164,17 @@ mlflow.sklearn.autolog()
 # Set run name - OG model with _validation appended
 val_run_name = f"{model_name}_validation"
 
+# Translation of short type to presentable string
+type_translation = {
+    'svm': 'Support Vector Classifier',
+    'rf': 'RandomForestClassifier',
+    'logreg': 'Logistic Regression',
+    'xgb': 'XGBoost Classifier',
+    'gb': 'GradientBoosting Classifier',
+    'ada': 'AdaBoost Classifier',
+    'knn': 'K-Nearest Neighbors Classifier'
+    }
+
 # Get classifier type
 classifier_path = Path(f"{model_output}/params/type")
 with open(classifier_path, 'r') as f:
@@ -168,7 +182,7 @@ with open(classifier_path, 'r') as f:
 
 # Start MLflow run
 with mlflow.start_run(run_name=val_run_name) as run:
-    print(f"\nNow predicting oxygen need for the validation data using the {classifier_type} model.")
+    print(f"\nNow predicting oxygen need for the validation data using the {type_translation[classifier_type]}.")
     mlflow.set_tag("Run name", val_run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
     mlflow.set_tag("Phase", "Model validation")
     # mlflow.set_tag("Hyperopt MLflow run", hyperopt_name) # Note: haven't included the associated hyperopt selection run for OG model but could be determined if useful
@@ -227,12 +241,11 @@ with mlflow.start_run(run_name=val_run_name) as run:
     # Plot feature importance # IMPROVE - don't technically need this for exval as it should be the same
     meta_col_names = X_data.columns[0:meta_cols].tolist() # todo check this sections calculation is accurate
     meta_cols = remaining_meta(meta_col_names, X_data[selected_features], sample_inves_7=None, graphs_dir=graphs_dir)  # Calculate meta columns remaining in order to group features # Note: untested that read in values are correct
-    print("SEL FEAT:", len(selected_features))
     plot_feature_importance(classifier_type, model, selected_features, graphs_dir, output_data_dir, model.get_params(),
                             X_data, y_data, meta_cols)
 
     # Plot calibration curve
-    plot_calibration_curve(y_proba, y_data, classifier_type, graphs_dir)
+    plot_calibration_curve(y_proba, y_data, type_translation[classifier_type], graphs_dir)
 
     # Plot decision tree
     class_names = np.array(['No_Oxygen_Need', 'Oxygen_Need'])
@@ -280,10 +293,10 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     shutil.copytree(ml_artifacts, output_artifacts, dirs_exist_ok=True)
     print(f"Copying {ml_artifacts} to {output_artifacts}")
     # Copy training data and graphs folder
-    shutil.copytree(data_folder, output_folder / "training_data", dirs_exist_ok=True)  # IMPROVE more elegant
-    print(f"Copying {data_folder} to {output_folder}/training_data")
-    shutil.copytree(graph_folder, output_folder / "training_graphs", dirs_exist_ok=True)
-    print(f"Copying {graph_folder} to {output_folder}/training_graphs\n")
+    shutil.copytree(data_folder, output_folder / "validation_data", dirs_exist_ok=True)  # IMPROVE more elegant
+    print(f"Copying {data_folder} to {output_folder}/validation_data")
+    shutil.copytree(graph_folder, output_folder / "validation_graphs", dirs_exist_ok=True)
+    print(f"Copying {graph_folder} to {output_folder}/validation_graphs\n")
 
     # Read in key metrics from training and update for validation
     key_metrics_path = f"{model_output}/key_metrics_{model_name}.csv"

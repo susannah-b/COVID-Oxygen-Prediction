@@ -1,6 +1,7 @@
 import socket
 import numpy as np
 import pandas as pd
+from matplotlib.colors import LinearSegmentedColormap
 from sklearn.pipeline import Pipeline
 from sklearn.tree import plot_tree, export_text
 from sklearn.calibration import CalibrationDisplay
@@ -16,12 +17,143 @@ from xgboost import plot_tree as xgb_plot_tree
 import mlflow
 import mlflow.sklearn
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import seaborn as sns
 import re
 import missingno as msno
 import miceforest as mf
 from itertools import repeat, chain
-import os
+
+### CHART STYLES #######################################################################################################
+# Return specified colour palette so palettes can be accessed globally
+def get_palette(palette): #WARNING - check that no
+    # Colour palettes # IMPROVE - more distance for blues, could add less range in R-Y section
+    colour_palette_10 = ["#E52B3E", "#DE5474", "#EE7956", "#F7C552", "#72C872", "#0EBC8D", "#129B95", "#167B9C",
+                         "#2F6B9F", "#BA439F"] # Rainbow
+    colour_palette_9 = ["#E52B3E", "#DE5474", "#EE7956", "#F7C552", "#72C872", "#0EBC8D", "#129B95", "#2F6B9F", "#BA439F"] # Near rainbow
+    colour_palette_8 = ["#E52B3E", "#EE7956", "#F7C552", "#0EBC8D", "#129B95", "#167B9C", "#485BA3", "#BA439F"] #ROYGBPP
+    colour_palette_7 = ["#E52B3E", "#EE7956", "#F7C552", "#0EBC8D", "#129B95", "#167B9C", "#485BA3"] # ROYGBP
+    colour_palette_6 = ["#E52B3E", "#EE7956", "#F7C552", "#72C872", "#129B95", "#2F6B9F"] #ROYGGB
+    colour_palette_5 = ["#E52B3E", "#EE7956", "#F7C552", "#0EBC8D", "#167B9C"] #ROYGB
+    colour_palette_4 = ["#E52B3E", "#F7C552", "#0EBC8D", "#485BA3"] # RYGB
+    colour_palette_3 = ["#E52B3E", "#72C872", "#485BA3"] # RGB
+    colour_palette_2 = ["#E52B3E", "#485BA3"] # RB
+    colour_palette_1 = ["#0EBC8D"]  # G
+    colour_palette_rwb = ["#E52B3E", "#FFFFFF", "#485BA3"] # RWB for cmaps
+    colour_palette_light_dark = ["#E52B3E", "#92111E", "#485BA3", "#324071"]  # RlRdBlBd
+
+    # Create colourmaps
+    cmap_rwb = LinearSegmentedColormap.from_list("cmap_rwb", colour_palette_rwb)
+
+    # Dictionary lookup
+    palette_dict = {
+        '10': colour_palette_10,
+        '9': colour_palette_9,
+        '8': colour_palette_8,
+        '7': colour_palette_7,
+        '6': colour_palette_6,
+        '5': colour_palette_5,
+        '4': colour_palette_4,
+        '3': colour_palette_3,
+        '2': colour_palette_2,
+        '1': colour_palette_1,
+        'rwb': colour_palette_rwb,
+        'ld': colour_palette_light_dark,
+        'cmap_rwb': cmap_rwb
+    }
+    return palette_dict[palette]
+
+
+
+def set_graph_style():
+    # Custom font
+    font_path = "Merriweather_24pt-Medium.ttf"
+    font_path_bold = "Merriweather_24pt-ExtraBold.ttf"
+    fm.fontManager.addfont(font_path)
+    fm.fontManager.addfont(font_path_bold)
+    custom_font = fm.FontProperties(fname=font_path).get_name()
+    plt.rcParams['font.family'] = custom_font
+
+
+    # Seaborn settings
+    sns.set_theme(
+        font=custom_font,  # Font family
+        font_scale=1.1,  # Font scaling factor
+        rc={  # Matplotlib settings
+        # Figure and font sizing
+        'figure.figsize': (7, 5),
+        'figure.dpi': 300,
+        'figure.autolayout': True,  # Automatically adjust layout
+        'font.size': 14,  # Base font size
+
+        # Line and marker styles
+        'lines.linewidth': 2.5,  # Line width
+        'lines.markersize': 8,  # Marker size
+        'lines.markeredgewidth': 0.5,  # Marker edge width
+
+        # Axes
+        'axes.titlesize': 14,  # Title font size
+        'axes.labelsize': 10,  # Axis label font size
+        'axes.linewidth': 1.5,  # Axis border width
+        'axes.edgecolor': 'black',  # Axis edge color
+        'axes.facecolor': 'white',  # Plot background color
+        'axes.spines.right': False,  # Remove right spine
+        'axes.spines.top': False,  # Remove top spine
+        'axes.titleweight': 'bold',
+
+        # Ticks
+        'xtick.bottom': True,
+        'ytick.left': True,
+        'xtick.labelsize': 8,  # X-tick label size
+        'ytick.labelsize': 8,  # Y-tick label size
+        'xtick.major.size': 5,  # X-tick length
+        'ytick.major.size': 5,  # Y-tick length
+        'xtick.major.width': 1.5,  # X-tick width
+        'ytick.major.width': 1.5,  # Y-tick width
+        'xtick.minor.visible': False,  # Show minor ticks
+        'ytick.minor.visible': False,  # Show minor ticks
+
+        # Legend
+        'legend.fontsize': 8,  # Legend font size
+        'legend.frameon': False,  # Show legend box
+        'legend.framealpha': 0,  # Legend transparency
+
+        # Grid
+        'axes.grid': True,
+        'grid.color': 'lightsteelblue',  # Grid line color
+        'grid.linestyle': 'solid',  # Grid line style
+        'grid.alpha': 0.5,  # Grid transparency
+        'grid.linewidth': 0.8,  # Grid line width
+
+        # Colors
+        'axes.prop_cycle': plt.cycler(color=get_palette("10")),
+
+        # Saving figures
+        'savefig.dpi': 300,  # Save resolution
+        'savefig.format': 'png',  # Default save format
+        'savefig.bbox': 'tight',  # Remove extra whitespace
+        'savefig.transparent': False,  # Background transparency
+
+        # Error bars
+        'errorbar.capsize': 3,  # Error bar cap size
+    })
+    sns.set_palette(get_palette("2"), desat=1)
+
+# Apply graph styles
+set_graph_style() # Call in functions.py
+
+### TYPE TRANSLATION ###################################################################################################
+# Translation of short type to presentable string
+type_translation = { #Note: unlike model_building.py, these are not capitalised in order to look better for graphs. #IMPROVE make the two consistent
+    'svm': 'Support vector classifier',
+    'rf': 'Random forest classifier',
+    'logreg': 'Logistic regression',
+    'xgb': 'XGBoost classifier',
+    'gb': 'Gradient boosting classifier',
+    'ada': 'AdaBoost classifier',
+    'knn': 'K-Nearest neighbors classifier',
+    'nn': 'Neural network'
+    }
 
 ### FEATURE ENGINEERING.PY #############################################################################################
 # Check for abnormal SIDs in the data; any unexpected lengths
@@ -113,7 +245,7 @@ def plot_row_missingness(merged, meta_cols, sample_inves_7, graphs_dir, dataset)
     ### Plot missingness
     plt.figure(figsize=(10, 6))
     sns.barplot(x='NA_Count', y='Rows', data=missing_distribution, palette='Blues_d', edgecolor='black', hue='NA_Count',
-                legend=False)
+                legend=False, saturation=1.0)
     plt.title('Missing Values in the Metadata')
     plt.xlabel('Number of Missing values per samples')
     plt.ylabel('Number of samples')
@@ -202,15 +334,15 @@ def remaining_meta(meta_columns, merged, sample_inves_7, graphs_dir):
     if graphs_dir:
         fig = msno.matrix(merged)
         fig_copy = fig.get_figure()
-        fig_copy.savefig(f'{graphs_dir}/Missingness_All-data_after_filtering.png', bbox_inches='tight')
+        fig_copy.savefig(f'{graphs_dir}/Missingness_All-data_after_filtering.png', bbox_inches=None)
         # Plot missingness of the metadata
         fig = msno.matrix(merged.iloc[:, 0:meta_cols])
         fig_copy = fig.get_figure()
-        fig_copy.savefig(f'{graphs_dir}/Missingness_All-metadata_after_filtering.png', bbox_inches='tight')
+        fig_copy.savefig(f'{graphs_dir}/Missingness_All-metadata_after_filtering.png', bbox_inches=None)
         # Plot missingness of the quant data
         fig = msno.matrix(merged.iloc[:, meta_cols:])  # Note: This is currently 546-27=519 MS data columns
         fig_copy = fig.get_figure()
-        fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_after_filtering.png', bbox_inches='tight')
+        fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_after_filtering.png', bbox_inches=None)
     return meta_cols
 
 # Categorise as numerical or categorical
@@ -373,11 +505,6 @@ def plot_missingness_ms(dataset, graphs_dir, name):
 
 # Impute with miceforest package (MICE imputation)
 def impute_MICE(dataset, filename, datastring, num_datasets, iterations, graphs_dir):
-    # Verify threading environment (for debugging)
-    print(f"Threading environment in Python:") # todo check for hpc - delete later
-    print(f"OMP_NUM_THREADS: {os.environ.get('OMP_NUM_THREADS', 'not set')}")
-    print(f"MKL_NUM_THREADS: {os.environ.get('MKL_NUM_THREADS', 'not set')}")
-
     # Create a dataset to store intermediate columns for missingness handling
     dataset_missing = dataset.copy()
 
@@ -403,7 +530,7 @@ def impute_MICE(dataset, filename, datastring, num_datasets, iterations, graphs_
         kernel.mice(
             iterations=iterations,
             min_data_in_leaf=3,
-            n_jobs=1,  # single threaded
+            n_jobs=1,
             random_state=42
         )
 
@@ -412,12 +539,6 @@ def impute_MICE(dataset, filename, datastring, num_datasets, iterations, graphs_
     except Exception as e:
         print(f"Error during MICE imputation: {str(e)}")
         raise
-    # Initialize kernel (handles categoricals natively)
-    kernel = mf.ImputationKernel(data=dataset_missing, num_datasets=num_datasets, mean_match_candidates=3, random_state=42)
-
-    # Run MICE with 10 iterations
-    import resource
-    kernel.mice(iterations=iterations, min_data_in_leaf=3, n_jobs=1) # WARNING reduced to get it to run
 
     # # Save feature importance plot #TODO plots commented again to try and run - issues with threading on HPC
     # # todo also tune hyperparameters? would that give better prediction
@@ -426,8 +547,8 @@ def impute_MICE(dataset, filename, datastring, num_datasets, iterations, graphs_
     # plt.tight_layout()
     # plt.savefig(f'{graphs_dir}/{datastring}_feature_importance_plot.png')
     # plt.close(fig1)
-    #
-    # # Save imputed distributions plot
+
+    # Save imputed distributions plot
     # fig2 = kernel.plot_imputed_distributions()
     # plt.tight_layout()
     # plt.savefig(f'{graphs_dir}/{datastring}_imputed_distributions_plot.png')
@@ -560,23 +681,20 @@ def basic_train(model, X_train, y_train, identifier, scores_dict, feature_select
 
 # Plot the performance of feature selectors per model
 def plot_fs_performance(all_results_sorted, graphs_dir):
-    plt.figure(figsize=(12, 8))
     sns.lineplot(data=all_results_sorted,
                  x='Model',
                  y='Test AUROC',
                  hue='Selector',
                  style='Selector',
                  markers=True,
-                 dashes=False,
-                 markersize=10,
-                 linewidth=2.5)
+                 dashes=False
+                 )
 
-    plt.title('Feature Selector Performance Across Models', fontsize=16)
-    plt.xlabel('Model', fontsize=14)
-    plt.ylabel('Test AUROC Score', fontsize=14)
+    plt.title('Feature Selector Performance Across Models')
+    plt.xlabel('Model')
+    plt.ylabel('Test AUROC Score')
     plt.xticks(rotation=15)
-    plt.legend(title='Feature Selectors', title_fontsize=12, fontsize=10)
-    plt.grid(alpha=0.2)
+    plt.legend(title='Feature Selectors')
     plt.tight_layout()
     plt.savefig(f"{graphs_dir}/selector_performance.png", bbox_inches='tight')
 
@@ -599,13 +717,12 @@ def port_in_use(host: str, port: int) -> bool:
 
 ### MODEL GRAPHS #######################################################################################################
 # Plot confusion matrix
-def plot_confusion_matrix(cm, graphs_dir): #TODO ai-gen and untested - Can also use ConfusionMatrixDisplay.from_predictions(y_data, predictions) with plt
+def plot_confusion_matrix(cm, graphs_dir):
     fig, ax = plt.subplots()
-    im = ax.imshow(cm, interpolation="nearest", cmap=plt.cm.Blues)
-    ax.figure.colorbar(im, ax=ax)
+    ax.imshow(cm, interpolation="nearest", cmap=get_palette("cmap_rwb")) # IMPROVE: don't love this colour mapping
 
     # Label axes
-    classes = ["Negative", "Positive"]  # adjust to your own labels #TODO
+    classes = ["O2 not required", "O2 required"]
     ax.set(
         xticks=range(len(classes)),
         yticks=range(len(classes)),
@@ -616,17 +733,15 @@ def plot_confusion_matrix(cm, graphs_dir): #TODO ai-gen and untested - Can also 
     )
 
     # Annotate each cell with the raw count
-    thresh = cm.max() / 2
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
             ax.text(
                 j, i, format(cm[i, j], "d"),
                 ha="center", va="center",
-                color="white" if cm[i, j] > thresh else "black"
+                color="white" #IMPROVE white unless value is within a certain range of zero (can use cmax to determine) in which case black so to be visible
             )
 
-    fig.tight_layout()
-    fig.savefig(f"{graphs_dir}/confusion_matrix.png", dpi=300)
+    fig.savefig(f"{graphs_dir}/confusion_matrix.png")
     plt.close(fig)
 
 # Plot PCA on the combined dataset before feature selection
@@ -644,26 +759,25 @@ def plot_pca_original(X_train, X_test, y_train, y_test, graphs_dir):
         pca = PCA(n_components=2)
         principal_components = pca.fit_transform(X_scaled)
 
-        plt.figure(figsize=(14, 10))
+        plt.figure()
 
         # Plot directly from arrays
         plt.scatter(principal_components[y_full == 0, 0],
                     principal_components[y_full == 0, 1],
-                    c='#088BDD', alpha=0.7, label='Does not require O₂')
+                    c=get_palette("2")[1], alpha=0.7, edgecolors=get_palette("2")[1], label='Does not require O₂')
         plt.scatter(principal_components[y_full == 1, 0],
                     principal_components[y_full == 1, 1],
-                    c='red', alpha=0.7, label='Requires O₂')
+                    c=get_palette("2")[0], alpha=0.7, edgecolors=get_palette("2")[0], label='Requires O₂')
 
         # Add explained variance
         explained_var = pca.explained_variance_ratio_ * 100
         plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
         plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
         plt.title('PCA of Full Dataset - Surrey')
-        plt.grid(alpha=0.3)
         plt.legend()
 
         # Save and show
-        plt.savefig(f"{graphs_dir}/pca_all_data.png", dpi=300, bbox_inches='tight')
+        plt.savefig(f"{graphs_dir}/pca_all_data.png")
         plt.close()
 
     except Exception as e:
@@ -686,7 +800,7 @@ def pca_pre_post_fs(X_full, selected_features, y_full, graphs_dir, fs_state):
     pc_df = pd.DataFrame(data=principal_components, columns=['PC1', 'PC2'])
     pc_df = pc_df.reset_index(drop=True)  # Ensure index alignment
 
-    plt.figure(figsize=(14, 10))
+    plt.figure()
 
     # Create boolean masks
     class_0_mask = (y_full == 0)
@@ -695,24 +809,23 @@ def pca_pre_post_fs(X_full, selected_features, y_full, graphs_dir, fs_state):
     # Plot using the aligned indices
     plt.scatter(pc_df.loc[class_0_mask, 'PC1'],
                 pc_df.loc[class_0_mask, 'PC2'],
-                c='#088BDD', alpha=0.7, label='Does not require O2')
+                c=get_palette("2")[1], alpha=0.7, edgecolors=get_palette("2")[1], label='Does not require O2')
     plt.scatter(pc_df.loc[class_1_mask, 'PC1'],
                 pc_df.loc[class_1_mask, 'PC2'],
-                c='red', alpha=0.7, label='Requires O2')
+                c=get_palette("2")[0], alpha=0.7, edgecolors=get_palette("2")[0], label='Requires O2')
 
     # Add explained variance
     explained_var = pca.explained_variance_ratio_ * 100
     plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
     plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
     plt.title(f'PCA {fs_state} Feature Selection')
-    plt.grid(alpha=0.3)
     plt.legend()
 
     # Save and show
-    plt.savefig(f"{graphs_dir}/pca_full_dataset_{fs_state}_FS.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/pca_full_dataset_{fs_state}_FS.png")
     plt.close()
 
-# Plot learning curve
+# Plot learning curve # TODO learning curve, precision recall etc have a legend and title with AP labelled - remove titles before final report
 def plot_learning_curve(final_pipeline, X_train, y_train, graphs_dir):
     # Compute scores at varying training sizes
     train_sizes, train_scores, val_scores = learning_curve(
@@ -733,7 +846,7 @@ def plot_learning_curve(final_pipeline, X_train, y_train, graphs_dir):
     ax.set_title("Learning Curve")
 
     # Save the plot
-    plt.savefig(f"{graphs_dir}/learning_curve.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/learning_curve.png")
 
     # Log the figure as an MLflow artifact
     mlflow.log_figure(fig, f"{graphs_dir}/learning_curve.png")
@@ -752,12 +865,13 @@ def plot_roc_auc(y_proba, y_test, graphs_dir):
     mlflow.log_figure(fig, f"{graphs_dir}/roc_curve.png")
 
     # Save the plot
-    plt.savefig(f"{graphs_dir}/roc_curve.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/roc_curve.png")
     plt.close(fig)
 
 # Plot feature importance (or permutation)
 def plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, data_dir, best_params,
                             X_test, y_test, meta_cols=None): # todo take out x test and y test from function calls - not used
+    set_graph_style()
     ### Extract feature importances based on the classifier type
     if classifier_type in ['rf', 'xgb', 'gb']:
         # Get feature importances if present
@@ -795,26 +909,56 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
 
         # Create grouped plots
         fig, axes = plt.subplots(2, 2, figsize=(20, 16))
-        fig.suptitle(f'Feature Importance Analysis - {classifier_type.upper()}', fontsize=20)
+        fig.suptitle(f'Feature Importance Analysis - {type_translation[classifier_type]}', fontsize=20)
 
         # Plot top 20 overall features
-        sns.set_style("whitegrid")
         ax1 = axes[0, 0]
         top_features = importance_df.head(20)
         bars = sns.barplot(x=importance_column, y='Feature', hue='Category', data=top_features,
-                           palette=['#1f77b4', '#ff7f0e'], ax=ax1)
+                           palette=get_palette("2"), ax=ax1, saturation=1.0)
         ax1.set_title('Top 20 Features Overall', fontsize=16)
         ax1.set_xlabel(f'{importance_column}', fontsize=14)
         ax1.set_ylabel('Feature', fontsize=14)
+        ax1.tick_params(axis='x', labelsize=10)
+        ax1.tick_params(axis='y', labelsize=10)
+        ax1.legend(loc='lower right')
+        # Add importances as text
+        for idx, value in enumerate(importance_df.head(20)[importance_column]):
+            text = ax1.text(
+                x=0.005,
+                y=idx,
+                s=f"{value:.2f}",
+                va='center',
+                ha='left',
+                fontsize=8,
+                fontweight = 'bold',
+                color='black',
+            )
 
         # Plot top 10 metadata features
         ax2 = axes[0, 1]
         metadata_features = importance_df[importance_df['Category'] == 'Metadata'].head(10)
         if not metadata_features.empty:
-            sns.barplot(x=importance_column, y='Feature', data=metadata_features, color='#1f77b4', ax=ax2)
+            sns.barplot(x=importance_column, y='Feature', data=metadata_features, color=get_palette("2")[1], ax=ax2,
+                        saturation=1.0)
             ax2.set_title('Top 10 Metadata Features', fontsize=16)
             ax2.set_xlabel(f'{importance_column}', fontsize=14)
             ax2.set_ylabel('Feature', fontsize=14)
+            ax2.tick_params(axis='x', labelsize=10)
+            ax2.tick_params(axis='y', labelsize=10)
+            # Add importances as text
+            for idx, value in enumerate(metadata_features.head(10)[importance_column]):
+                text = ax2.text(
+                    x=0.001,
+                    y=idx,
+                    s=f"{value:.2f}",
+                    va='center',
+                    ha='left',
+                    fontsize=10,
+                    fontweight='bold',
+                    color='black',
+                )
+
         else:
             ax2.text(0.5, 0.5, 'No Metadata Features', ha='center', va='center', transform=ax2.transAxes)
             ax2.set_title('Top 10 Metadata Features', fontsize=16)
@@ -824,10 +968,25 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
         proteomics_features = importance_df[importance_df['Category'] == 'Proteomics'].head(10)
         if not proteomics_features.empty:
             sns.barplot(x=importance_column, y='Feature', data=proteomics_features,
-                        color='#ff7f0e', ax=ax3)
+                        color=get_palette("2")[0], ax=ax3, saturation=1.0)
             ax3.set_title('Top 10 Proteomics Features', fontsize=16)
             ax3.set_xlabel(f'{importance_column}', fontsize=14)
             ax3.set_ylabel('Feature', fontsize=14)
+            ax3.set_ylabel('Feature', fontsize=14)
+            ax3.tick_params(axis='x', labelsize=10)
+            ax3.tick_params(axis='y', labelsize=10)
+            # Add importances as text
+            for idx, value in enumerate(proteomics_features.head(10)[importance_column]):
+                text = ax3.text(
+                    x=0.002,
+                    y=idx,
+                    s=f"{value:.2f}",
+                    va='center',
+                    ha='left',
+                    fontsize=10,
+                    fontweight='bold',
+                    color='black',
+                )
         else:
             ax3.text(0.5, 0.5, 'No Proteomics Features', ha='center', va='center', transform=ax3.transAxes)
             ax3.set_title('Top 10 Proteomics Features', fontsize=16)
@@ -839,22 +998,30 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
 
         # Create a summary bar plot
         x_pos = range(len(category_summary))
-        bars = ax4.bar(x_pos, category_summary['sum'], color=['#1f77b4', '#ff7f0e'])
+        bars = ax4.bar(x_pos, category_summary['sum'], color=[get_palette("2")[1],get_palette("2")[0]])
         ax4.set_title('Total Importance by Category', fontsize=16)
         ax4.set_xlabel('Category', fontsize=14)
         ax4.set_ylabel(f'Total {importance_column}', fontsize=14)
         ax4.set_xticks(x_pos)
         ax4.set_xticklabels(category_summary['Category'])
+        ax4.tick_params(axis='x', labelsize=10)
+        ax4.tick_params(axis='y', labelsize=10)
+
+        # Custom font (for some reason default styles aren't applied) #IMPROVE
+        font_path = "Merriweather_24pt-Medium.ttf"
+        fm.fontManager.addfont(font_path)
+        custom_font = fm.FontProperties(fname=font_path).get_name()
+        plt.rcParams['font.family'] = custom_font
 
         # Add value labels on bars
         for i, bar in enumerate(bars):
             height = bar.get_height()
             ax4.text(bar.get_x() + bar.get_width() / 2., height,
                      f'{height:.3f}\n({category_summary.iloc[i]["count"]} features)',
-                     ha='center', va='bottom')
+                     ha='center', va='bottom', fontproperties=custom_font)
 
         plt.tight_layout()
-        plt.savefig(f"{graphs_dir}/feature_importance_grouped.png", dpi=300, bbox_inches='tight')
+        plt.savefig(f"{graphs_dir}/feature_importance_grouped.png")
         plt.close()
 
         # # Print category summaries
@@ -875,7 +1042,7 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
         plt.figure(figsize=(12, 8))
         sns.set_style("whitegrid")
         ax = sns.barplot(x=importance_column, y='Feature', data=importance_df.head(20),
-                         palette='viridis')
+                         palette='viridis', saturation=1.0)
 
         if classifier_type in ['rf', 'xgb', 'gb']:
             ax.set_title(f'Top 20 Feature Importances - {classifier_type.upper()}', fontsize=16)
@@ -904,11 +1071,13 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
 # Plot calibration curve
 def plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir):
     try:
+        set_graph_style()
+
         # Compute calibration curve and Brier score
         brier_score = brier_score_loss(y_test, y_proba)
 
         # Plot calibration curve
-        fig, ax = plt.subplots(figsize=(10, 8))
+        fig, ax = plt.subplots()
         CalibrationDisplay.from_predictions(
             y_test,
             y_proba,
@@ -917,11 +1086,11 @@ def plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir):
             ax=ax,
             name=f"{classifier_type} (Brier: {brier_score:.3f})"
         )
+        set_graph_style()
         ax.set_title(f"Calibration Curve")
-        ax.set_xlabel("Mean Predicted Probability")
-        ax.set_ylabel("Fraction of Positives")
-        ax.grid(True)
-        plt.savefig(f"{graphs_dir}/calibration_curve.png", dpi=300, bbox_inches='tight')
+        ax.set_xlabel("Mean predicted probability")
+        ax.set_ylabel("Fraction of positives")
+        plt.savefig(f"{graphs_dir}/calibration_curve.png")
         plt.close(fig)
 
         # Log Brier score
@@ -947,7 +1116,7 @@ def plot_decision_distribution(y_proba, y_test, graphs_dir):
     plt.savefig(f'{graphs_dir}/prediction_distribution.png')
 
 # Plot decision tree for tree-based models
-def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, data_dir, graphs_dir):
+def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, data_dir, graphs_dir): # IMPROVE - use better styling (my set_styles doesn't seem to apply either). Will tweak if publishing the trees
     ### Plot decision tree for tree-based models #TODO: Basic version - when a final best model is obtained this graph can be fine tuned if useful for the final report
     if classifier_type in ['rf', 'gb', 'xgb']: #TODO untested for gb - and could use refinement of outputs
         try:
@@ -968,22 +1137,24 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
             # Extract decision tree according to each model type
             if classifier_type == 'rf':
                 estimator = clf.estimators_[0]
-                plt.figure(figsize=(25, 15))
+                plt.figure()
                 plot_tree(estimator,
                           feature_names=feature_names,
                           class_names=class_names,
                           filled=True,
                           rounded=True,
-                          max_depth=4) # Limit depth for readability - but ideally expand this for the final graph
+                          max_depth=4, #  Limit depth for readability - but ideally expand this for the final graph
+                          cmap=cmap,
+                          precision=2,)
                 plt.title("Random Forest - First Tree")
-                plt.savefig(f"{graphs_dir}/decision_tree_1.png", dpi=300, bbox_inches='tight')
+                plt.savefig(f"{graphs_dir}/first_decision_tree.png")
                 plt.close()
 
                 # Also export text representation
                 tree_rules = export_text(estimator,
                                          feature_names=list(feature_names),
                                          max_depth=4)
-                with open(f"{data_dir}/tree_rules_1.txt", "w") as f:
+                with open(f"{data_dir}/first_tree_rules.txt", "w") as f:
                     f.write(tree_rules)
 
             elif classifier_type == 'gb': #todo check if same sanitising/list format is required as in xgb; if so group in an elif before handling each separately
@@ -994,9 +1165,12 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
                           class_names=class_names,
                           filled=True,
                           rounded=True,
-                          max_depth=4)
+                          max_depth=4,
+                          cmap=cmap,
+                          precision=2,
+                          )
                 plt.title("Gradient Boosting - First Tree")
-                plt.savefig(f"{graphs_dir}/decision_tree_1.png", dpi=300, bbox_inches='tight')
+                plt.savefig(f"{graphs_dir}/first_decision_tree.png", dpi=300, bbox_inches='tight')
                 plt.close()
 
             elif classifier_type == 'xgb':
@@ -1017,9 +1191,10 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
                 booster.feature_names = feature_names
                 # Plot
                 plt.figure(figsize=(25, 15))
+                cmap = set_graph_style()
                 xgb_plot_tree(clf, tree_idx=0, rankdir='LR')
                 plt.title("XGBoost - First Tree")
-                plt.savefig(f"{graphs_dir}/decision_tree_1.png", dpi=300, bbox_inches='tight')
+                plt.savefig(f"{graphs_dir}/first_decision_tree.png", dpi=300, bbox_inches='tight')
                 plt.close()
 
                 # Check size of trees
@@ -1079,7 +1254,7 @@ def plot_pca_test_unprocessed(X_test, y_test, graphs_dir):
     pc_df = pd.DataFrame(data=principal_components, columns=['PC1', 'PC2'])
     pc_df = pc_df.reset_index(drop=True)  # Ensure index alignment
 
-    plt.figure(figsize=(7, 5))
+    plt.figure()
 
     # Create boolean masks
     class_0_mask = (y_test == 0)
@@ -1088,21 +1263,20 @@ def plot_pca_test_unprocessed(X_test, y_test, graphs_dir):
     # Plot using the aligned indices
     plt.scatter(pc_df.loc[class_0_mask, 'PC1'],
                 pc_df.loc[class_0_mask, 'PC2'],
-                c='#088BDD', alpha=0.7, label='Does not require O2')
+                c=get_palette("2")[1], alpha=0.7, edgecolors=get_palette("2")[1],  label='Does not require O2')
     plt.scatter(pc_df.loc[class_1_mask, 'PC1'],
                 pc_df.loc[class_1_mask, 'PC2'],
-                c='red', alpha=0.7, label='Requires O2')
+                c=get_palette("2")[0], alpha=0.7, edgecolors=get_palette("2")[0], label='Requires O2')
 
     # Add explained variance
     explained_var = pca.explained_variance_ratio_ * 100
     plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
     plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
     plt.title('PCA of test data - ground truth')
-    plt.grid(alpha=0.3)
     plt.legend()
 
     # Save and show
-    plt.savefig(f"{graphs_dir}/pca_test_before_processing.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/pca_test_before_processing.png")
     plt.close()
 
 # Plot PCA on the final predictions derived from test data
@@ -1123,7 +1297,7 @@ def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):
     pc_df = pd.DataFrame(data=principal_components, columns=['PC1', 'PC2'])
     pc_df = pc_df.reset_index(drop=True)  # Ensure index alignment
 
-    plt.figure(figsize=(7, 5))
+    plt.figure()
 
     # Create boolean masks
     class_0_mask = (y_test == 0)
@@ -1132,21 +1306,20 @@ def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):
     # Plot using the aligned indices
     plt.scatter(pc_df.loc[class_0_mask, 'PC1'],
                 pc_df.loc[class_0_mask, 'PC2'],
-                c='#088BDD', alpha=0.7, label='Does not require O2')
+                c=get_palette("2")[1], alpha=0.7, edgecolors=get_palette("2")[1], label='Does not require O2')
     plt.scatter(pc_df.loc[class_1_mask, 'PC1'],
                 pc_df.loc[class_1_mask, 'PC2'],
-                c='red', alpha=0.7, label='Requires O2')
+                c=get_palette("2")[0], alpha=0.7, edgecolors=get_palette("2")[0], label='Requires O2')
 
     # Add explained variance
     explained_var = pca.explained_variance_ratio_ * 100
     plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
     plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
     plt.title('PCA of test data - ground truth')
-    plt.grid(alpha=0.3)
     plt.legend()
 
     # Save and show
-    plt.savefig(f"{graphs_dir}/pca_test_before_prediction.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/pca_test_before_prediction.png")
     plt.close()
 
     ### Create a second PCA colour coded by TP/FP/TN/FN
@@ -1157,21 +1330,20 @@ def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):
     mask_tp = (y_test == 1) & (y_pred == 1)  # True Positive
 
     # Create plot with distinct colors # TODO: Could switch colours for FN FP if more legible that way
-    plt.figure(figsize=(7, 5))
+    plt.figure()
     plt.scatter(pc_df.loc[mask_tn, 'PC1'], pc_df.loc[mask_tn, 'PC2'],
-                c='#088BDD', alpha=0.7, label='True Negative')  # Blue = negative (doesn't need O2)
+                c=get_palette("ld")[2], alpha=0.9, edgecolors=get_palette("ld")[2], label='True Negative')  # Blue = negative (doesn't need O2)
     plt.scatter(pc_df.loc[mask_fp, 'PC1'], pc_df.loc[mask_fp, 'PC2'],
-                c='#084769', alpha=0.7, label='False Positive')  # Dark blue = Predicted positive but should be negative
+                c=get_palette("ld")[3], alpha=0.9, edgecolors=get_palette("ld")[3], label='False Positive')  # Dark blue = Predicted positive but should be negative
     plt.scatter(pc_df.loc[mask_fn, 'PC1'], pc_df.loc[mask_fn, 'PC2'],
-                c='#780000', alpha=0.7, label='False Negative')  # Dark red = Predicted negative but should be positive
+                c=get_palette("ld")[0], alpha=0.9, edgecolors=get_palette("ld")[0], label='False Negative')  # Dark red = Predicted negative but should be positive
     plt.scatter(pc_df.loc[mask_tp, 'PC1'], pc_df.loc[mask_tp, 'PC2'],
-                c='red', alpha=0.7, label='True Positive')  # Red = Postive (needs O2)
+                c=get_palette("ld")[1], alpha=0.9, edgecolors=get_palette("ld")[1], label='True Positive')  # Red = Postive (needs O2)
 
     # Add labels and title
     plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')
     plt.ylabel(f'PC2 ({explained_var[1]:.1f}%)')
     plt.title('PCA of test data (Prediction outcomes)')
-    plt.grid(alpha=0.3)
     plt.legend()
 
     # Add count annotations
@@ -1187,7 +1359,7 @@ def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):
                 bbox={"facecolor": "white", "alpha": 0.8, "pad": 5})
 
     # Save and log
-    plt.savefig(f"{graphs_dir}/pca_test_prediction_outcomes.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/pca_test_prediction_outcomes.png")
     plt.close()
 
 ### NEURAL NETWORKS ####################################################################################################

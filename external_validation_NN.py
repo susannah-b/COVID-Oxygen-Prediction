@@ -30,7 +30,7 @@ import warnings
 from functions import basic_train, port_in_use, pca_pre_post_fs, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
     plot_pca_predicted, plot_confusion_matrix, plot_fs_performance, plot_pca_original, plot_pca_test_unprocessed, \
-    remaining_meta, grouped_shap
+    remaining_meta, grouped_shap, set_graph_style
 import re
 import os
 from datetime import datetime
@@ -44,6 +44,9 @@ from sklearn.metrics import confusion_matrix, classification_report
 import shap
 from sklearn.base import clone
 from mlflow.tracking import MlflowClient
+
+# Apply graph styles
+set_graph_style()
 
 ### SET RANDOM SEEDS ###################################################################################################
 # Set global random seeds
@@ -177,7 +180,7 @@ if not args.from_pipeline:
 else:
     model_name = run_name
 
-# Load model by run ID # TODO - think this should be changed to the mlruns file as model_output isn't always made
+# Load model by run ID
 model_output = f"model_output/{model_name}"
 model_path = f"{model_output}/artifacts/best_model"
 model = mlflow.pyfunc.load_model(model_path)
@@ -339,7 +342,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
         f.write("Warning: Due to issues with SHAP graph generation, it is recommended to avoid using the external "
                 "validation SHAP graphs. If needed, ideally return to the script to fix the issue with feature names.")
     # Plot calibration curve
-    classifier_type = 'neural_network'
+    classifier_type = 'Neural network' # IMPROVE technically to match the TML, this should be converted by type_translation dict as classifier-type is used as the no-whitespace version, and type_translation['nn'] the presentable one
     plot_calibration_curve(y_proba, y_data, classifier_type, graphs_dir)
 
     # Plot a precision-recall curve
@@ -383,10 +386,10 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     shutil.copytree(ml_artifacts, output_artifacts, dirs_exist_ok=True)
     print(f"Copying {ml_artifacts} to {output_artifacts}")
     # Copy training data and graphs folder
-    shutil.copytree(data_folder, output_folder / "training_data", dirs_exist_ok=True)  # IMPROVE more elegant
-    print(f"Copying {data_folder} to {output_folder}/training_data")
-    shutil.copytree(graph_folder, output_folder / "training_graphs", dirs_exist_ok=True)
-    print(f"Copying {graph_folder} to {output_folder}/training_graphs\n")
+    shutil.copytree(data_folder, output_folder / "validation_data", dirs_exist_ok=True)  # IMPROVE more elegant
+    print(f"Copying {data_folder} to {output_folder}/validation_data")
+    shutil.copytree(graph_folder, output_folder / "validation_graphs", dirs_exist_ok=True)
+    print(f"Copying {graph_folder} to {output_folder}/validation_graphs\n")
 
     # Read in key metrics from training and update for validation
     key_metrics_path = f"{model_output}/key_metrics_{model_name}.csv"
