@@ -54,7 +54,6 @@ torch.manual_seed(42) # PyTorch CPU
 torch.cuda.manual_seed_all(42) # PyTorch GPU (if available)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
-np.random.seed(42)
 
 ### ARGPARSE TO SET RUN NAME ###########################################################################################
   # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
@@ -176,7 +175,7 @@ if enable_tracking:
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "15_0729-160809_HPC" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "145_0731-010846_HPC" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
@@ -318,9 +317,9 @@ with mlflow.start_run(run_name=val_run_name) as run:
     shap_values = explainer.shap_values(X_data_sf_df, nsamples=100)  # entire dataset
     plt.figure()
     shap.summary_plot(shap_values, X_data_sf_df, feature_names=selected_features, show=False)
-    plt.tight_layout()
-    plt.savefig(f"{graphs_dir}/SHAP_graph.png", dpi=300, bbox_inches='tight')
-    plt.close()
+    fig = plt.gcf()
+    plt.savefig(f"{graphs_dir}/SHAP_graph.png")
+    plt.close(fig)
 
     ### Repeat SHAP but this time aggregate metadata and protein data to examine influence
     # Calculate meta columns after feature selection
@@ -336,11 +335,13 @@ with mlflow.start_run(run_name=val_run_name) as run:
     shap_grouped = grouped_shap(shap_values, selected_features, shap_groups)
     plt.figure()
     shap.summary_plot(shap_grouped.values, feature_names=shap_grouped.columns, show=False)
-    plt.tight_layout()
-    plt.savefig(f"{graphs_dir}/SHAP_graph_grouped.png", dpi=300, bbox_inches='tight')
+    fig = plt.gcf()
+    plt.savefig(f"{graphs_dir}/SHAP_graph_grouped.png")
     with open(f"{graphs_dir}/SHAP_warning.txt", "w") as f:
         f.write("Warning: Due to issues with SHAP graph generation, it is recommended to avoid using the external "
                 "validation SHAP graphs. If needed, ideally return to the script to fix the issue with feature names.")
+    plt.close(fig)
+
     # Plot calibration curve
     classifier_type = 'Neural network' # IMPROVE technically to match the TML, this should be converted by type_translation dict as classifier-type is used as the no-whitespace version, and type_translation['nn'] the presentable one
     plot_calibration_curve(y_proba, y_data, classifier_type, graphs_dir)

@@ -56,7 +56,6 @@ def reset_seeds(seed=44): #TODO can actually be hypertuned
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    np.random.seed(seed)
 
 ### ARGPARSE TO SET RUN NAME ###########################################################################################
   # If running as part of pipeline.py, get the run_name from the stored config file not the config in cwd (avoids issues with multiple script runs)
@@ -503,7 +502,6 @@ criterion = nn.BCEWithLogitsLoss()  # Binary Cross Entropy with built-in sigmoid
   # IMPROVE: This is used to be similar in structure to the traditional model; could be used after a similar basic_train
   #  function is implemented. For now, just stores best result for the defined model
 classifier_type = 'neural_network'
-type_translation = {'nn': 'Neural network'} # To use in graphs
 
 # Dictionary to store the best model accuracies
 best_roc = {
@@ -1183,7 +1181,7 @@ with mlflow.start_run(run_name=run_name) as run:
     plt.xlabel('Epochs')
     plt.ylabel('Loss (BCE with logits)')
     plt.legend()
-    plt.savefig(f'{graphs_dir}/loss_curve.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'{graphs_dir}/loss_curve.png')
 
     # Plot ROC curve
     plot_roc_auc(y_proba, y_test, graphs_dir)
@@ -1193,8 +1191,9 @@ with mlflow.start_run(run_name=run_name) as run:
     shap_values = explainer.shap_values(X_test_processed, nsamples=100)
     plt.figure()
     shap.summary_plot(shap_values, X_test_processed, feature_names=selected_features, show=False)
-    plt.tight_layout()
-    plt.savefig(f"{graphs_dir}/SHAP_graph.png", dpi=300, bbox_inches='tight')
+    fig = plt.gcf()  # Get current figure created by shap
+    plt.savefig(f"{graphs_dir}/SHAP_graph.png")
+    plt.close(fig)
 
     ### Repeat SHAP but this time aggregate metadata and protein data to examine influence
     # Calculate meta columns after feature selection
@@ -1212,14 +1211,17 @@ with mlflow.start_run(run_name=run_name) as run:
     shap_grouped = grouped_shap(shap_values, selected_features, shap_groups)
     plt.figure()
     shap.summary_plot(shap_grouped.values, feature_names=shap_grouped.columns, show=False)
-    plt.tight_layout()
-    plt.savefig(f"{graphs_dir}/SHAP_graph_grouped.png", dpi=300, bbox_inches='tight')
+    fig = plt.gcf()  # Get current figure created by shap
+    plt.savefig(f"{graphs_dir}/SHAP_graph_grouped.png")
+    plt.savefig(f"AAA_SHAP_graph_grouped.png")
+    plt.close(fig)
 
     # Plot precision-recall curve
     plot_precision_recall(y_proba, y_test, graphs_dir)
 
     # Plot calibration curve
-    plot_calibration_curve(y_proba, y_test, type_translation[classifier_type], graphs_dir)
+    classifier_whitespace = "Neural network" # Input a name to present on the graph
+    plot_calibration_curve(y_proba, y_test, classifier_whitespace, graphs_dir)
 
     # Plot decision distribution
     plot_decision_distribution(y_proba, y_test, graphs_dir)

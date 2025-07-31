@@ -38,9 +38,10 @@ def get_palette(palette): #WARNING - check that no
     colour_palette_4 = ["#E52B3E", "#F7C552", "#0EBC8D", "#485BA3"] # RYGB
     colour_palette_3 = ["#E52B3E", "#72C872", "#485BA3"] # RGB
     colour_palette_2 = ["#E52B3E", "#485BA3"] # RB
+    colour_palette_2r = colour_palette_2[::-1] # IMPROVE would have been better to do palette 2 as [0] blue (negative and [1] red (postive) but it's eaier to use an alternative palette than replace
     colour_palette_1 = ["#0EBC8D"]  # G
     colour_palette_rwb = ["#E52B3E", "#FFFFFF", "#485BA3"] # RWB for cmaps
-    colour_palette_light_dark = ["#E52B3E", "#92111E", "#485BA3", "#324071"]  # RlRdBlBd
+    colour_palette_light_dark = ["#E52B3E", "#92111E", "#485BA3", "#2C3863"]  # RlRdBlBd
 
     # Create colourmaps
     cmap_rwb = LinearSegmentedColormap.from_list("cmap_rwb", colour_palette_rwb)
@@ -56,6 +57,7 @@ def get_palette(palette): #WARNING - check that no
         '4': colour_palette_4,
         '3': colour_palette_3,
         '2': colour_palette_2,
+        '2r': colour_palette_2r,
         '1': colour_palette_1,
         'rwb': colour_palette_rwb,
         'ld': colour_palette_light_dark,
@@ -809,10 +811,10 @@ def pca_pre_post_fs(X_full, selected_features, y_full, graphs_dir, fs_state):
     # Plot using the aligned indices
     plt.scatter(pc_df.loc[class_0_mask, 'PC1'],
                 pc_df.loc[class_0_mask, 'PC2'],
-                c=get_palette("2")[1], alpha=0.7, edgecolors=get_palette("2")[1], label='Does not require O2')
+                c=get_palette("2")[1], alpha=0.7, edgecolors=get_palette("2")[1], label='O2 not required')
     plt.scatter(pc_df.loc[class_1_mask, 'PC1'],
                 pc_df.loc[class_1_mask, 'PC2'],
-                c=get_palette("2")[0], alpha=0.7, edgecolors=get_palette("2")[0], label='Requires O2')
+                c=get_palette("2")[0], alpha=0.7, edgecolors=get_palette("2")[0], label='O2 required')
 
     # Add explained variance
     explained_var = pca.explained_variance_ratio_ * 100
@@ -925,7 +927,7 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
         # Add importances as text
         for idx, value in enumerate(importance_df.head(20)[importance_column]):
             text = ax1.text(
-                x=0.005,
+                x=0.03*(top_features[importance_column].max()),
                 y=idx,
                 s=f"{value:.2f}",
                 va='center',
@@ -949,7 +951,7 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
             # Add importances as text
             for idx, value in enumerate(metadata_features.head(10)[importance_column]):
                 text = ax2.text(
-                    x=0.001,
+                    x= 0.03*(metadata_features[importance_column].max()),
                     y=idx,
                     s=f"{value:.2f}",
                     va='center',
@@ -978,7 +980,7 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
             # Add importances as text
             for idx, value in enumerate(proteomics_features.head(10)[importance_column]):
                 text = ax3.text(
-                    x=0.002,
+                    x=0.03*(proteomics_features[importance_column].max()),
                     y=idx,
                     s=f"{value:.2f}",
                     va='center',
@@ -1076,6 +1078,7 @@ def plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir):
         # Compute calibration curve and Brier score
         brier_score = brier_score_loss(y_test, y_proba)
 
+
         # Plot calibration curve
         fig, ax = plt.subplots()
         CalibrationDisplay.from_predictions(
@@ -1090,6 +1093,7 @@ def plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir):
         ax.set_title(f"Calibration Curve")
         ax.set_xlabel("Mean predicted probability")
         ax.set_ylabel("Fraction of positives")
+        ax.legend(loc='upper left')
         plt.savefig(f"{graphs_dir}/calibration_curve.png")
         plt.close(fig)
 
@@ -1100,19 +1104,28 @@ def plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir):
         print(f"Error generating calibration curve: {str(e)}")
 
 def plot_decision_distribution(y_proba, y_test, graphs_dir):
-    plt.figure(figsize=(10, 6))
+    fig, ax = plt.subplots()
     sns.histplot(
         data=pd.DataFrame({
             'Probability': y_proba,
-            'Actual': y_test.replace({0: 'No O2', 1: 'O2 Needed'})
+            'Actual': y_test.replace({0: 'O2 not required', 1: 'O2 required'})
         }),
         x='Probability',
         hue='Actual',
         element='step',
         stat='density',
         common_norm=False,
-        bins=20
+        bins=10,
+        palette = get_palette("2r"),
+        ax=ax
     )
+    ax.set_title('Predicted Probability Distribution')
+    ax.set_xlabel('Predicted Probability of Requiring O2')
+    ax.set_ylabel('Density')
+    legend = ax.get_legend()
+    legend.set_title("Ground truth", prop={'size': 10})
+    for text in legend.get_texts():
+        text.set_fontsize(8)
     plt.savefig(f'{graphs_dir}/prediction_distribution.png')
 
 # Plot decision tree for tree-based models
@@ -1263,10 +1276,10 @@ def plot_pca_test_unprocessed(X_test, y_test, graphs_dir):
     # Plot using the aligned indices
     plt.scatter(pc_df.loc[class_0_mask, 'PC1'],
                 pc_df.loc[class_0_mask, 'PC2'],
-                c=get_palette("2")[1], alpha=0.7, edgecolors=get_palette("2")[1],  label='Does not require O2')
+                c=get_palette("2")[1], alpha=0.7, edgecolors=get_palette("2")[1],  label='O2 not required')
     plt.scatter(pc_df.loc[class_1_mask, 'PC1'],
                 pc_df.loc[class_1_mask, 'PC2'],
-                c=get_palette("2")[0], alpha=0.7, edgecolors=get_palette("2")[0], label='Requires O2')
+                c=get_palette("2")[0], alpha=0.7, edgecolors=get_palette("2")[0], label='O2 required')
 
     # Add explained variance
     explained_var = pca.explained_variance_ratio_ * 100
@@ -1306,10 +1319,10 @@ def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):
     # Plot using the aligned indices
     plt.scatter(pc_df.loc[class_0_mask, 'PC1'],
                 pc_df.loc[class_0_mask, 'PC2'],
-                c=get_palette("2")[1], alpha=0.7, edgecolors=get_palette("2")[1], label='Does not require O2')
+                c=get_palette("2")[1], alpha=0.7, edgecolors=get_palette("2")[1], label='O2 not required')
     plt.scatter(pc_df.loc[class_1_mask, 'PC1'],
                 pc_df.loc[class_1_mask, 'PC2'],
-                c=get_palette("2")[0], alpha=0.7, edgecolors=get_palette("2")[0], label='Requires O2')
+                c=get_palette("2")[0], alpha=0.7, edgecolors=get_palette("2")[0], label='O2 required')
 
     # Add explained variance
     explained_var = pca.explained_variance_ratio_ * 100
@@ -1332,13 +1345,13 @@ def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):
     # Create plot with distinct colors # TODO: Could switch colours for FN FP if more legible that way
     plt.figure()
     plt.scatter(pc_df.loc[mask_tn, 'PC1'], pc_df.loc[mask_tn, 'PC2'],
-                c=get_palette("ld")[2], alpha=0.9, edgecolors=get_palette("ld")[2], label='True Negative')  # Blue = negative (doesn't need O2)
+                c=get_palette("ld")[2], alpha=0.7, edgecolors=get_palette("ld")[2], label='True Negative')  # Blue = negative (doesn't need O2)
     plt.scatter(pc_df.loc[mask_fp, 'PC1'], pc_df.loc[mask_fp, 'PC2'],
-                c=get_palette("ld")[3], alpha=0.9, edgecolors=get_palette("ld")[3], label='False Positive')  # Dark blue = Predicted positive but should be negative
+                c=get_palette("ld")[3], alpha=0.7, edgecolors=get_palette("ld")[3], label='False Positive')  # Dark blue = Predicted positive but should be negative
     plt.scatter(pc_df.loc[mask_fn, 'PC1'], pc_df.loc[mask_fn, 'PC2'],
-                c=get_palette("ld")[0], alpha=0.9, edgecolors=get_palette("ld")[0], label='False Negative')  # Dark red = Predicted negative but should be positive
+                c=get_palette("ld")[1], alpha=0.7, edgecolors=get_palette("ld")[1], label='False Negative')  # Dark red = Predicted negative but should be positive
     plt.scatter(pc_df.loc[mask_tp, 'PC1'], pc_df.loc[mask_tp, 'PC2'],
-                c=get_palette("ld")[1], alpha=0.9, edgecolors=get_palette("ld")[1], label='True Positive')  # Red = Postive (needs O2)
+                c=get_palette("ld")[0], alpha=0.7, edgecolors=get_palette("ld")[0], label='True Positive')  # Red = Postive (needs O2)
 
     # Add labels and title
     plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')

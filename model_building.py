@@ -56,9 +56,6 @@ warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 # Bool to show additional detail
 show_detail = False
 
-# Random seed
-np.random.seed(42)
-
 # Set graph style
 set_graph_style()
 
@@ -327,7 +324,7 @@ feature_selectors_all = {
     'SFS_LSVC': {
         'class': SequentialFeatureSelector,
         'base_params': {
-            'estimator': LinearSVC(),
+            'estimator': LinearSVC(dual=True),
             'n_features_to_select': 'auto',
             'tol': 0.01,
         }
@@ -710,7 +707,7 @@ if type_translation['ada'] in best_models_fs:
         'learning_rate': hp.uniform('ada_learning_rate', 0.1, 1.0),
         'estimator': hp.choice('ada_base_estimator', [
             DecisionTreeClassifier(random_state=42),
-            LinearSVC(random_state=42), # WARNING: LinearSVC is untested
+            LinearSVC(random_state=42, dual=True), # WARNING: LinearSVC is untested
             LogisticRegression(random_state=42),
         ]),
         'random_state': 42,

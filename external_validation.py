@@ -21,8 +21,7 @@ from functions import port_in_use, pca_pre_post_fs, plot_roc_auc, plot_feature_i
     plot_decision_tree, plot_precision_recall, plot_pca_predicted, plot_confusion_matrix, plot_pca_original, \
     plot_pca_test_unprocessed, remaining_meta, set_graph_style
 
-# Set global random seeds
-np.random.seed(42)
+
 
 # Apply graph styles
 set_graph_style()
@@ -114,7 +113,7 @@ if enable_tracking:
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "18_0729-234816_HPC" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "135_0731-001831_HPC" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
