@@ -402,21 +402,20 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     }
     # Update existing metrics
     for key, value in key_metrics.items():
-        existing_metrics[key] = value
+        existing_metrics.loc[model_name, key] = value
     existing_metrics.to_csv(key_metrics_path)
 
     # Update the master metrics file
     all_key_metrics_path = "key_metrics.csv"
     if os.path.exists(all_key_metrics_path):
         all_metrics = pd.read_csv(all_key_metrics_path, index_col=0)
-        # Drop existing row if present
-        all_metrics.drop(index=model_name, errors='ignore', inplace=True)
-        # Update
-        if run_name not in all_metrics.index:
-            all_metrics = pd.concat([all_metrics, existing_metrics])
+        if model_name in all_metrics.index:
+            for col in key_metrics:
+                all_metrics.loc[model_name, col] = key_metrics[col]
+        else:
+            all_metrics = pd.concat([all_metrics, existing_metrics.loc[[model_name]]])
     else:
-        all_metrics = existing_metrics
-    all_metrics.to_csv(all_key_metrics_path)
+        existing_metrics.loc[[model_name]].to_csv(all_key_metrics_path)
 
 # Print run ids
 print(store_val_id)

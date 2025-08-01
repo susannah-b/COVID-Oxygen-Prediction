@@ -1296,26 +1296,24 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     # Either update the existing key metrics, or create a new file
     if os.path.exists(key_metrics_path):
         existing_metrics = pd.read_csv(key_metrics_path, index_col=0)
-        for key, value in key_metrics.items():
-            existing_metrics[key] = value
+        for col in key_metrics:
+            existing_metrics.at[run_name, col] = key_metrics[col]
         existing_metrics.to_csv(key_metrics_path)
-        key_metrics_df = existing_metrics
+        run_metrics = existing_metrics.loc[[run_name]]
     else:
-        key_metrics_df = pd.DataFrame({k: [v] for k, v in key_metrics.items()}, index=[run_name])
-        key_metrics_df.to_csv(f"{output_folder}/{key_metrics_path}")
+        print("Creating a new file for neural network key metrics - WARNING if also running TML first, this behaviour is unintended") #TODO
+        run_metrics = pd.DataFrame(key_metrics, index=[run_name])
+        run_metrics.to_csv(f"{output_folder}/{key_metrics_path}")
 
     # Save to masterlist of metrics
     all_key_metrics_path = "key_metrics.csv"
     if os.path.exists(all_key_metrics_path):
         all_metrics = pd.read_csv(all_key_metrics_path, index_col=0)
-        # Drop existing row if present
-        all_metrics.drop(index=run_name, errors='ignore', inplace=True)
-        # Update
-        if run_name not in all_metrics.index:
-            all_metrics = pd.concat([all_metrics, key_metrics_df])
+        for col in run_metrics.columns:
+            all_metrics.loc[run_name, col] = run_metrics.at[run_name, col]
+        all_metrics.to_csv(all_key_metrics_path)
     else:
-        all_metrics = key_metrics_df
-    all_metrics.to_csv(all_key_metrics_path)
+        run_metrics.to_csv(all_key_metrics_path)
 
 # Print run ids
 print(store_hyp_id)

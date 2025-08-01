@@ -76,6 +76,7 @@ parser.add_argument(
 args = parser.parse_args()
 run_name = args.run_name
 
+print(f"Starting run {run_name}\n")
 #### READ CONFIG FILE ##################################################################################################
 # Set config path based on whether the script is run standlone or part of pipeline.py (config moved to 'inputs')
 if not args.from_pipeline:
@@ -621,6 +622,7 @@ selector_param_spaces = { # Note: for new data, values may need to be tweaked as
         'scoring' : hp.choice('refcv_scoring', ['f1', 'accuracy', 'roc_auc']),
         'cv' : hp.choice('refcv_cv', [StratifiedKFold(5), StratifiedKFold(10)])
     },
+    'NONE': {}
 }
 
 ### DEFINE SEARCH SPACES PER MODEL #####################################################################################
@@ -654,6 +656,7 @@ if type_translation['rf'] in best_models_fs:
         'random_state': 42,
         'fs_params': selector_param_spaces[best_models_fs[type_translation['rf']]] # The FS shorthand name, e.g. SFM_RF # WARNING - reviewing code and not sure if only rf models are having fs_params tuned explored? why do the search spaces not ahve this
     })
+
 # Logistic regression
 if type_translation['logreg'] in best_models_fs:
    best_spaces.append({
@@ -905,8 +908,9 @@ with mlflow.start_run(run_name=run_name) as run:
         if hasattr(selector, 'get_support'): # Standard scikit-learn selector
             support_mask = selector.get_support()
             selected_features = X_train.columns[support_mask].tolist()
-        elif hasattr(selector, 'support_'):# Other selector types
-            selected_features = X_train.columns[selector.support_].tolist()
+        elif hasattr(selector, 'support_'): # Other selector types
+            support_mask = selector.support_
+            selected_features = X_train.columns[support_mask].tolist()
         else: # For other selector types, get features via transformation
             print("Feature selection method is incompatible with current handling to extract features - results are not printed.")
             selected_features = X_train.columns.tolist()  # Set selected features to full X_train if not assigned by a feature selector
@@ -990,7 +994,8 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Plot feature importance
     meta_col_names = X_test.columns[0:meta_cols].tolist()
-    meta_cols = remaining_meta(meta_col_names, X_test[selected_features], sample_inves_7=None, graphs_dir=graphs_dir) # Calculate meta columns remaining in order to group features
+    if meta_cols != 0:
+        meta_cols = remaining_meta(meta_col_names, X_test[selected_features], sample_inves_7=None, graphs_dir=graphs_dir) # Calculate meta columns remaining in order to group features
     plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, output_data_dir, best_params,
                             X_test, y_test, meta_cols)
 
@@ -1069,28 +1074,26 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     hyper_run_file = final_folder / "hyperopt_run_name.txt"
     hyper_run_file.write_text(f"{hyperopt_name}")
 
-    # Save key metrics to csv
+    # Save key metrics to csv #TODO - in order to simplify for bug fixing, removed the overwrite for same run name. Restore.
     key_metrics_path = f"key_metrics_{run_name}.csv"
     key_metrics = {
         'ML Test Accuracy': test_accuracy,
         'ML Test F1': test_f1,
         'ML Test AUROC': test_roc,
              }
-    key_metrics_df = pd.DataFrame({k: [v] for k, v in key_metrics.items()}, index=[run_name])
-    key_metrics_df.to_csv(f"{output_folder}/{key_metrics_path}")
+    run_metrics = pd.DataFrame(key_metrics, index=[run_name])
+    run_metrics.to_csv(f"{output_folder}/{key_metrics_path}")
 
     # Save to masterlist of metrics
     all_key_metrics_path = "key_metrics.csv"
     if os.path.exists(all_key_metrics_path):
         all_metrics = pd.read_csv(all_key_metrics_path, index_col=0)
-        # Drop existing row if present
-        all_metrics.drop(index=run_name, errors='ignore', inplace=True)
-        # Update
-        if run_name not in all_metrics.index:
-            all_metrics = pd.concat([all_metrics, key_metrics_df])
+        # Update only ML metrics columns for this run
+        for col in key_metrics.keys():
+            all_metrics.loc[run_name, col] = run_metrics.loc[run_name, col]
+            all_metrics.to_csv(all_key_metrics_path)
     else:
-        all_metrics = key_metrics_df
-    all_metrics.to_csv(all_key_metrics_path)
+        run_metrics.to_csv(all_key_metrics_path)
 
 
 # Print run ids

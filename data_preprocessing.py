@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 from functions import convert_categories, normalise_MS, impute_MICE, encode_categorical, encode_y, \
-    plot_missingness_ms, set_graph_style, clean_feature_names
+    plot_missingness_ms, set_graph_style
 
 # WARNING untested for validate False after some changes to the file structure
 # WARNING This script is largely untested after changes to structure due to computational limitations. Check it runs fine on HPC - is the output data what you expect?
@@ -231,10 +231,6 @@ imputed_surrey_test = f"{training_data}/Surrey_test_after_imputation.csv"
 if validate:
     imputed_isaric = f"{validation_data}/ISARIC_after_imputation.csv"
 
-# Clean data columns
-surrey_X_train = clean_feature_names(surrey_X_train)
-X_test = clean_feature_names(X_test)
-
 if impute:
     try: #todo testing
         surrey_X_train = impute_MICE(surrey_X_train, imputed_surrey_train, 'Surrey_Train', num_datasets, iterations, training_graphs)
@@ -253,7 +249,6 @@ else: # If not imputing, read in the data
     print("Skipping imputation; using already produced imputed file. Otherwise set impute = True")
     print("WARNING: The imputed data may not reflect the current config: 'validate', day_zero, drop_metadata, and the \
 text-to-binary columns can all alter the present features. Check that the file is correct.")
-    print("Development note: Currently validation is set to true, text2binary all false (due to validaton), day_zero true, and drop_metadata false. To test more options, generate the imputation files or fix the HPC.") #todo delete later
     # Check for imputed data file
     imputed_storage = "imputed_data"
     if not os.path.exists(imputed_storage):

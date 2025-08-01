@@ -443,7 +443,7 @@ def text_to_binary(dataset, col_name, col_type, training_data, min_count):
     # Drop rare binary columns
     frequent_cols = counts[counts['Count'] >= min_count][col_type].tolist()
     cols_added = len(frequent_cols)
-    binary_df = binary_df[[f"{col_type}: {m}" for m in frequent_cols]]
+    binary_df = binary_df[[f"{col_type}_ {m}" for m in frequent_cols]]
 
     # Drop old column and add new ones
     col_position = dataset.columns.get_loc(col_name)
@@ -696,22 +696,30 @@ def basic_train(model, X_train, y_train, identifier, scores_dict, feature_select
 
 # Plot the performance of feature selectors per model
 def plot_fs_performance(all_results_sorted, graphs_dir):
+    # Determine palette based on number of selectors
+    fs_count = len(all_results_sorted)
+    if fs_count <= 10: # IMPROVE Currently only have ten available options for colour with defined palettes - could add more
+        palette = get_palette(f"{fs_count}")
+    else:
+        palette = get_palette("10")
+
     sns.lineplot(data=all_results_sorted,
                  x='Model',
                  y='Test AUROC',
                  hue='Selector',
                  style='Selector',
                  markers=True,
-                 dashes=False
+                 dashes=False,
+                 palette=palette
                  )
 
     plt.title('Feature Selector Performance Across Models')
     plt.xlabel('Model')
     plt.ylabel('Test AUROC Score')
     plt.xticks(rotation=15)
-    plt.legend(title='Feature Selectors')
+    plt.legend(title=None, title_fontsize=10)
     plt.tight_layout()
-    plt.savefig(f"{graphs_dir}/selector_performance.png", bbox_inches='tight')
+    plt.savefig(f"{graphs_dir}/selector_performance.png")
 
 # Convert integers to floats
 class IntToFloatTransformer(BaseEstimator, TransformerMixin):
@@ -1170,7 +1178,6 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
                           filled=True,
                           rounded=True,
                           max_depth=4, #  Limit depth for readability - but ideally expand this for the final graph
-                          cmap=cmap,
                           precision=2,)
                 plt.title("Random Forest - First Tree")
                 plt.savefig(f"{graphs_dir}/first_decision_tree.png")
@@ -1192,7 +1199,6 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
                           filled=True,
                           rounded=True,
                           max_depth=4,
-                          cmap=cmap,
                           precision=2,
                           )
                 plt.title("Gradient Boosting - First Tree")
@@ -1217,7 +1223,6 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
                 booster.feature_names = feature_names
                 # Plot
                 plt.figure(figsize=(25, 15))
-                cmap = set_graph_style()
                 xgb_plot_tree(clf, tree_idx=0, rankdir='LR')
                 plt.title("XGBoost - First Tree")
                 plt.savefig(f"{graphs_dir}/first_decision_tree.png", dpi=300, bbox_inches='tight')
