@@ -42,12 +42,13 @@ data_preprocessing:
     # Determine whether to impute the data or not; if running standalone scripts (not in pipeline.py) this can be switched off for repeat runs
   drop_metadata: False
     # Determine whether to drop the metadata; i.e. only use proteomics data. 
-  num_datasets_imputation: 10
-  iterations_imputation: 10
+  num_datasets_imputation: 2
+  iterations_imputation: 2
+  # Note: 2/2 is the maximum I can reliably achieve, but can be changed with access to increased computational resources.
   imputed_data_config: ''
   # Optional term which can be manually (for now) appended to the '[...]_after_imputation.csv' file to indicate the config used for imputation. 
   # If changing validate/day_zero/drop_metadata or any text_features, you can modify the aforementioned file with a suffix and write above to specify which to use.
-  # Suggested template: '_V+-D+-T2B[M-P-C-R-]-M+'
+  # Suggested template: '_V+D-T2B[M-P-C-R-]M+' for validate=True, day_zero=True, drop_metadata=False, and all text features included.
 
 model_building:
   var_threshold: 1e-10

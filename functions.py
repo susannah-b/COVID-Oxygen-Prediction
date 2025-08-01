@@ -1,6 +1,7 @@
 import socket
 import numpy as np
 import pandas as pd
+from fontTools.ttLib.woff2 import bboxFormat
 from matplotlib.colors import LinearSegmentedColormap
 from sklearn.pipeline import Pipeline
 from sklearn.tree import plot_tree, export_text
@@ -265,15 +266,17 @@ def plot_row_missingness(merged, meta_cols, sample_inves_7, graphs_dir, dataset)
 def plot_missingness_msno(merged, dataset, meta_cols, graphs_dir):
     fig = msno.matrix(merged)
     fig_copy = fig.get_figure()
-    fig_copy.savefig(f'{graphs_dir}/Missingness_All-data_before_filtering_{dataset}.png', bbox_inches='tight')
-    # Plot missingness of the metadata
-    fig = msno.matrix(merged.iloc[:, 0:meta_cols])
-    fig_copy = fig.get_figure()
-    fig_copy.savefig(f'{graphs_dir}/Missingness_All-metadata_before_filtering_{dataset}.png', bbox_inches='tight')
-    # Plot missingness of the quant data
-    fig = msno.matrix(merged.iloc[:, meta_cols:])
-    fig_copy = fig.get_figure()
-    fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_before_filtering_{dataset}.png', bbox_inches='tight')
+    fig_copy.set_tight_layout(False)
+    with plt.style.context({'figure.autolayout': False}):
+        fig_copy.savefig(f'{graphs_dir}/Missingness_All-data_before_filtering_{dataset}.png')
+        # Plot missingness of the metadata
+        fig = msno.matrix(merged.iloc[:, 0:meta_cols])
+        fig_copy = fig.get_figure()
+        fig_copy.savefig(f'{graphs_dir}/Missingness_All-metadata_before_filtering_{dataset}.png')
+        # Plot missingness of the quant data
+        fig = msno.matrix(merged.iloc[:, meta_cols:])
+        fig_copy = fig.get_figure()
+        fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_before_filtering_{dataset}.png')
 
 # Investigate null values in each column
 def investigate_null(merged, dataset, merged_null_before, sample_inves_7, output_dir):
@@ -334,17 +337,18 @@ def remaining_meta(meta_columns, merged, sample_inves_7, graphs_dir):
 
     # Plot missingness after filtering (full dataset)
     if graphs_dir:
-        fig = msno.matrix(merged)
-        fig_copy = fig.get_figure()
-        fig_copy.savefig(f'{graphs_dir}/Missingness_All-data_after_filtering.png', bbox_inches=None)
-        # Plot missingness of the metadata
-        fig = msno.matrix(merged.iloc[:, 0:meta_cols])
-        fig_copy = fig.get_figure()
-        fig_copy.savefig(f'{graphs_dir}/Missingness_All-metadata_after_filtering.png', bbox_inches=None)
-        # Plot missingness of the quant data
-        fig = msno.matrix(merged.iloc[:, meta_cols:])  # Note: This is currently 546-27=519 MS data columns
-        fig_copy = fig.get_figure()
-        fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_after_filtering.png', bbox_inches=None)
+        with plt.style.context({'figure.autolayout': False}):
+            fig = msno.matrix(merged)
+            fig_copy = fig.get_figure()
+            fig_copy.savefig(f'{graphs_dir}/Missingness_All-data_after_filtering.png')
+            # Plot missingness of the metadata
+            fig = msno.matrix(merged.iloc[:, 0:meta_cols])
+            fig_copy = fig.get_figure()
+            fig_copy.savefig(f'{graphs_dir}/Missingness_All-metadata_after_filtering.png')
+            # Plot missingness of the quant data
+            fig = msno.matrix(merged.iloc[:, meta_cols:])  # Note: This is currently 546-27=519 MS data columns
+            fig_copy = fig.get_figure()
+            fig_copy.savefig(f'{graphs_dir}/Missingness_All-quantdata_after_filtering.png')
     return meta_cols
 
 # Categorise as numerical or categorical
@@ -428,7 +432,7 @@ def text_to_binary(dataset, col_name, col_type, training_data, min_count):
     # Create binary columns
     mlb = MultiLabelBinarizer()
     matrix = mlb.fit_transform(dataset[col_name])
-    binary_df = pd.DataFrame(matrix, columns=[f"{col_type}: {m}" for m in mlb.classes_],
+    binary_df = pd.DataFrame(matrix, columns=[f"{col_type}_ {m}" for m in mlb.classes_],
                              index=dataset.index)
 
     # Count medication frequencies (also used to check for errors) and save to csv
@@ -451,6 +455,11 @@ def text_to_binary(dataset, col_name, col_type, training_data, min_count):
 
     print(f"The '{col_name}' column has been expanded into {len(frequent_cols)} binary columns.")
     return dataset, cols_added
+
+    # Apply cleaned names to DataFrame
+    df_clean = df.copy()
+    df_clean.columns = new_columns
+    return df_clean
 
 # Replace values found within a column to fix typos
 def replace_values(df, column_name, original, replacement):
@@ -480,9 +489,13 @@ def convert_categories(dataset, ordinal_cats):
 def normalise_MS(dataset, meta_cols):
     # Separate out MS data
     dataset_quant = dataset.iloc[:, meta_cols:]
-
     # Get sample medians per row
-    medians = dataset_quant.median(axis=1)
+    try:
+        medians = dataset_quant.median(axis=1)
+    except:
+        print("WARNING: Could not determine medians. Saving quant dataset to quant.csv in cwd.") #todo testing only
+        print("Columns in 'quant' are:", dataset_quant.columns)
+        exit(1)
     # Subtract the median (due to being log2-transformed)
     dataset_quant = dataset_quant.sub(medians, axis=0)
     return dataset_quant
@@ -951,7 +964,7 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
             # Add importances as text
             for idx, value in enumerate(metadata_features.head(10)[importance_column]):
                 text = ax2.text(
-                    x= 0.03*(metadata_features[importance_column].max()),
+                    x= 0.01*(metadata_features[importance_column].max()),
                     y=idx,
                     s=f"{value:.2f}",
                     va='center',
@@ -980,7 +993,7 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
             # Add importances as text
             for idx, value in enumerate(proteomics_features.head(10)[importance_column]):
                 text = ax3.text(
-                    x=0.03*(proteomics_features[importance_column].max()),
+                    x=0.04*(proteomics_features[importance_column].max()),
                     y=idx,
                     s=f"{value:.2f}",
                     va='center',

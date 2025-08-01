@@ -29,7 +29,6 @@ import mlflow.sklearn
 from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
 from statsmodels.stats.outliers_influence import variance_inflation_factor
-import warnings
 from functions import basic_train, IntToFloatTransformer, port_in_use, pca_pre_post_fs, plot_learning_curve, \
     plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
     plot_pca_predicted, plot_confusion_matrix, plot_fs_performance, plot_decision_distribution, plot_pca_original, \
@@ -49,9 +48,9 @@ from mlflow.tracking import MlflowClient
 #IMPROVE Break script into smaller parts
 
 # WARNING - suppress MLflow warning and precision warning - fix later
-warnings.filterwarnings("ignore", category=UserWarning, module="mlflow.types.utils")
-from sklearn.exceptions import UndefinedMetricWarning
-warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
+# warnings.filterwarnings("ignore", category=UserWarning, module="mlflow.types.utils")
+# from sklearn.exceptions import UndefinedMetricWarning
+# warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
 # Bool to show additional detail
 show_detail = False
@@ -324,7 +323,7 @@ feature_selectors_all = {
     'SFS_LSVC': {
         'class': SequentialFeatureSelector,
         'base_params': {
-            'estimator': LinearSVC(dual=True),
+            'estimator': LinearSVC(dual=True, max_iter=3000),
             'n_features_to_select': 'auto',
             'tol': 0.01,
         }
@@ -366,6 +365,7 @@ best_models_fs = {}
 basic_results = []
 # Outline each model and perform the basic training function to evaluate performance of each
 if basic_training:
+    "Beginning basic_training function to determine the best model type and feature selector."
     # Logistic Regression
     if Logistic_regression:
         log_reg = LogisticRegression(solver='saga', tol=1e-4, max_iter=1500)
@@ -387,7 +387,7 @@ if basic_training:
     # AdaBoost
     if AdaBoost:
         dt_clf_ada = DecisionTreeClassifier()
-        ada_clf = AdaBoostClassifier(estimator=dt_clf_ada, random_state=42)
+        ada_clf = AdaBoostClassifier(estimator=dt_clf_ada, random_state=42, algorithm='SAMME')
         ada_results = basic_train(ada_clf, X_train, y_train, "AdaBoost Classifier", top_model_scores, feature_selectors, feature_selection, threshold)
         basic_results.append(ada_results)
 
@@ -519,7 +519,8 @@ def objective(params):
         clf = GradientBoostingClassifier(**params)
     elif classifier_type == 'ada':
         params['n_estimators'] = int(params['n_estimators'])
-        clf = AdaBoostClassifier(**params)
+        clf = AdaBoostClassifier(**best_params)
+        # clf = AdaBoostClassifier(**params)
     elif  classifier_type == 'knn':
         params['n_neighbors'] = int(params['n_neighbors'])
         params['leaf_size'] = int(params['leaf_size'])
@@ -707,10 +708,11 @@ if type_translation['ada'] in best_models_fs:
         'learning_rate': hp.uniform('ada_learning_rate', 0.1, 1.0),
         'estimator': hp.choice('ada_base_estimator', [
             DecisionTreeClassifier(random_state=42),
-            LinearSVC(random_state=42, dual=True), # WARNING: LinearSVC is untested
+            LinearSVC(random_state=42, dual=True, max_iter=3000), # WARNING: LinearSVC is untested
             LogisticRegression(random_state=42),
         ]),
         'random_state': 42,
+        'algorithm': 'SAMME', # IMPROVE: This is added to prevent warnings on the HPC, which is 1.4.2 vs local 1.6.1 scikit-learn. Ideally update the container and then handle any new warnings, but for now just ensuring the HPC version runs smoothly. (Also true for other warnings)
         'fs_params': selector_param_spaces[best_models_fs[type_translation['ada']]]
     })
 # K-Nearest Neighbors
@@ -800,7 +802,6 @@ mlflow.set_experiment(exp_name)
 mlflow.sklearn.autolog()
 store_final_id = None # Initialise value to store run ID to print at end
 final_run_id = None
-final_exp_id = None
 with mlflow.start_run(run_name=run_name) as run:
     mlflow.set_tag("Run name", run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
     mlflow.set_tag("ML type", "Traditional ML")

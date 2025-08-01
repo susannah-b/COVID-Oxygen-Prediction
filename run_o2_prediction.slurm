@@ -3,12 +3,12 @@
 #SBATCH --partition=med
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=1
 #SBATCH --mem=72G
 #SBATCH --time=72:00:00
 #SBATCH --output=logs/o2_pred_%j.out
 #SBATCH --error=logs/o2_pred_%j.err
-#SBATCH --mail-type=FAIL
+#SBATCH --mail-type=FAIL,END
 
 # Print job information
 echo "Job ID: $SLURM_JOB_ID"

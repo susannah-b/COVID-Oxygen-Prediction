@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 from functions import convert_categories, normalise_MS, impute_MICE, encode_categorical, encode_y, \
-    plot_missingness_ms, set_graph_style
+    plot_missingness_ms, set_graph_style, clean_feature_names
 
 # WARNING untested for validate False after some changes to the file structure
 # WARNING This script is largely untested after changes to structure due to computational limitations. Check it runs fine on HPC - is the output data what you expect?
@@ -118,14 +118,15 @@ if show_testing:
         print(isaric_X.iloc[:5, :5])  # Should be a df with SID as indexes, column values look as expected
 
 ### DETERMINE REMAINING METADATA COLUMNS ###############################################################################
-meta_cols_surrey = config['general']['training_meta_cols'] - 1 # -1 Due to removed of Label (O2 req.) column for X vs y
+meta_cols_surrey = max(config['general']['training_meta_cols'] - 1, 0) # -1 Due to removed of Label (O2 req.) column for X vs y
 if validate:
-    meta_cols_isaric = config['general']['validation_meta_cols'] - 1
+    meta_cols_isaric = max(config['general']['validation_meta_cols'] - 1, 0)
 
 # Drop the metadata if enabled # IMPROVE - should this be moved to feature_engineering.py - doesn't affect results but is a bit misleading that the produced data includes metadata there for earlier files
 if drop_metadata:  # Drop the metadata if bool is true
     # Surrey
     surrey_X_train = surrey_X_train.iloc[:, meta_cols_surrey:]
+    X_test = X_test.iloc[:, meta_cols_surrey:]
     meta_cols_surrey = 0
     print(f"Metadata was dropped from the Surrey dataset; if unintended, disable drop_metadata in the script.")
     if validate:
@@ -134,7 +135,7 @@ if drop_metadata:  # Drop the metadata if bool is true
         meta_cols_isaric = 0
         print(f"Metadata was dropped from the ISARIC dataset; if unintended, disable drop_metadata in the script.")
 
-# Update config for later access
+# Update config for later access # WARNING if dropping metadata, this will cause issues upon re-running. Run feature engineeering first to re-assign.
 with open(config_path, "w") as f:
     config["general"]["training_meta_cols"] = meta_cols_surrey
     if validate:
@@ -230,11 +231,23 @@ imputed_surrey_test = f"{training_data}/Surrey_test_after_imputation.csv"
 if validate:
     imputed_isaric = f"{validation_data}/ISARIC_after_imputation.csv"
 
+# Clean data columns
+surrey_X_train = clean_feature_names(surrey_X_train)
+X_test = clean_feature_names(X_test)
+
 if impute:
-    surrey_X_train = impute_MICE(surrey_X_train, imputed_surrey_train, 'Surrey_Train', num_datasets, iterations, training_graphs)
-    X_test = impute_MICE(X_test, imputed_surrey_test, 'Surrey_Test', num_datasets, iterations, training_graphs)
-    if validate:
-        isaric_X = impute_MICE(isaric_X, imputed_isaric, 'ISARIC',num_datasets , iterations, validation_graphs)
+    try: #todo testing
+        surrey_X_train = impute_MICE(surrey_X_train, imputed_surrey_train, 'Surrey_Train', num_datasets, iterations, training_graphs)
+        X_test = impute_MICE(X_test, imputed_surrey_test, 'Surrey_Test', num_datasets, iterations, training_graphs)
+        if validate:
+            isaric_X = impute_MICE(isaric_X, imputed_isaric, 'ISARIC',num_datasets , iterations, validation_graphs)
+    except:
+        print("Surrey columns:")
+        print(surrey_X_train.columns)
+        print("Test columns:")
+        print(X_test.columns)
+        print("ISARIC columns:")
+        print(isaric_X.columns)
 
 else: # If not imputing, read in the data
     print("Skipping imputation; using already produced imputed file. Otherwise set impute = True")
@@ -247,7 +260,7 @@ text-to-binary columns can all alter the present features. Check that the file i
         os.makedirs(imputed_storage)
         print("Created imputation data file - copy files with certain configs for [validate/day_zero/text_features(x4)"
               "/drop_metadata] and append descriptors in order to use certain pre-imputed files for each run.\n e.g."
-              "\"V+-D+-T2B[M-P-C-R-]-M+\" for validate=True, all days, no text to binary conversions for all four features,)"
+              "\"V+D+T2B[M-P-C-R-]M+\" for validate=True, all days, no text to binary conversions for all four features,)"
               "and keep metadata. Any descriptor can be used, but must be set in config before the run under \"imputed_data_config\"")
     # Get imputed files from previous runs - note these must be copied over manually
     surrey_X_train = pd.read_csv(f"{imputed_storage}/Surrey_train_after_imputation{imputed_data_config}.csv", index_col=0)

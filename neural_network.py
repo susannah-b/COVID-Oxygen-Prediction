@@ -303,7 +303,7 @@ feature_selectors = {
     'SFS_LSVC': {
         'class': SequentialFeatureSelector,
         'base_params': {
-            'estimator': LinearSVC(),
+            'estimator': LinearSVC(dual=True, max_iter=3000),
             'n_features_to_select': 'auto',
             'tol': 0.01,
         }
@@ -1213,7 +1213,6 @@ with mlflow.start_run(run_name=run_name) as run:
     shap.summary_plot(shap_grouped.values, feature_names=shap_grouped.columns, show=False)
     fig = plt.gcf()  # Get current figure created by shap
     plt.savefig(f"{graphs_dir}/SHAP_graph_grouped.png")
-    plt.savefig(f"AAA_SHAP_graph_grouped.png")
     plt.close(fig)
 
     # Plot precision-recall curve

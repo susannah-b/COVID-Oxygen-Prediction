@@ -356,6 +356,7 @@ remove_cols = ['Sample', # Stored as row indexes
                'Cell Pellet', # Sample handling irrelevant to health
                'Clot', # Sample handling irrelevant to health
                'Clot Formation', # Sample handling irrelevant to health
+               # 'CPAP', # Possible bias?
                'Date', # Only shows date of first sample I believe, not current sample date
                'Date of Hospital Admission', # Not relevant to health
                'Date of MOST RECENT Covid Positive Swab', # Not relevant to health
