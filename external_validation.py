@@ -319,6 +319,7 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
                 all_metrics.loc[model_name, col] = key_metrics[col]
         else:
             all_metrics = pd.concat([all_metrics, existing_metrics.loc[[model_name]]])
+            all_metrics.to_csv(all_key_metrics_path)
     else:
         existing_metrics.loc[[model_name]].to_csv(all_key_metrics_path)
 

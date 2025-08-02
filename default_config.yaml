@@ -38,7 +38,7 @@ feature_engineering:
     # Minimum count for text features to be included in the dataset. If set to 0, all text features will be included.
 
 data_preprocessing:
-  impute: False # Disabled due to computational restrictions but should be set to true. 
+  impute: False # Disabled due to computational restrictions but should be set to true.
     # Determine whether to impute the data or not; if running standalone scripts (not in pipeline.py) this can be switched off for repeat runs
   drop_metadata: False
     # Determine whether to drop the metadata; i.e. only use proteomics data. 
@@ -58,23 +58,23 @@ model_building:
   basic_training: True
     # Whether to go through the training of basic models to determine the most promising candidates/feature selectors (alternative is to set certain methods below)
   specify_model:
-    # If basic_training is disabled, use the model type/feature selector specified here
+    # If basic_training is disabled, use the model type/feature selector specified here
     # See the output tables of model_building.py for the appropriate format
     model_type: "RandomForestClassifier"
     fs: "SFM_RF"
   feature_selectors:
-    RFECV_LR: False # Some of these are temporaily disabled for testing
-    RFECV_SVC: False
-    RFECV_RF: False
-    RFECV_XGB: False
-    SFM_LR: True
+    RFECV_LR: True # Some of these are temporaily disabled for testing
+    RFECV_SVC: True
+    RFECV_RF: True
+    RFECV_XGB: True
+    SFM_LR: False # Disabled due to long run times
     SFM_SVC: True
     SFM_RF: True
     SFM_XGB: True
     SFM_LAS: True
-    SFS_LR: False
-    SFS_LSVC: False
-    SFS_XGB: False
+    SFS_LR: True
+    SFS_LSVC: True
+    SFS_XGB: False # Disabled due to long run times
     NONE: True
     # Whether to include each feature selector as a possible candidate for basic_training
   models_to_test:
@@ -89,7 +89,7 @@ model_building:
     KNN: True
   n_models_to_tune: 2
     # The top N models - change this as needed
-  max_evals: 1000 # Needs to be tuned TODO
+  max_evals: 1000 # Needs to be tuned TODO
     # Change this as needed
   track_final: true 
     # Whether to copy the model_output to the designated folder for easier browsing - some functions depend on this so it's strongly recommended to leave it on.

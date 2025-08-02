@@ -1,7 +1,7 @@
+from datetime import datetime
 import socket
 import numpy as np
 import pandas as pd
-from fontTools.ttLib.woff2 import bboxFormat
 from matplotlib.colors import LinearSegmentedColormap
 from sklearn.pipeline import Pipeline
 from sklearn.tree import plot_tree, export_text
@@ -675,6 +675,7 @@ def basic_train(model, X_train, y_train, identifier, scores_dict, feature_select
             print(f"Error training {identifier} with {fs_name}: {str(e)}")
             model_results[identifier] = [identifier, None, None, None, None, None]
 
+    print(f"***Finished tuning {model} with {selector}. Current date/time is {datetime.now().strftime('%m-%d %H:%M')}***")  # TODO testing
     # Print results from best feature selection methods
     model_results_df = pd.DataFrame.from_dict(model_results,
                            orient='index',
@@ -703,6 +704,7 @@ def plot_fs_performance(all_results_sorted, graphs_dir):
     else:
         palette = get_palette("10")
 
+    plt.figure(figsize=(11, 6))
     sns.lineplot(data=all_results_sorted,
                  x='Model',
                  y='Test AUROC',
@@ -717,8 +719,8 @@ def plot_fs_performance(all_results_sorted, graphs_dir):
     plt.xlabel('Model')
     plt.ylabel('Test AUROC Score')
     plt.xticks(rotation=15)
-    plt.legend(title=None, title_fontsize=10)
-    plt.tight_layout()
+    plt.legend(title='Feature Selectors', title_fontsize=10, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)  # TODO test
+    plt.tight_layout(rect=[0, 0, 0.85, 1])
     plt.savefig(f"{graphs_dir}/selector_performance.png")
 
 # Convert integers to floats
@@ -929,6 +931,7 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
 
         # Sort by importance within each category
         importance_df = importance_df.sort_values([importance_column], ascending=False)
+        importance_df = importance_df[importance_df[importance_column] > 0.001] # Filter out very low values
 
         # Create grouped plots
         fig, axes = plt.subplots(2, 2, figsize=(20, 16))
@@ -1363,13 +1366,13 @@ def plot_pca_predicted(X_test, selected_features, y_test, graphs_dir, y_pred):
     # Create plot with distinct colors # TODO: Could switch colours for FN FP if more legible that way
     plt.figure()
     plt.scatter(pc_df.loc[mask_tn, 'PC1'], pc_df.loc[mask_tn, 'PC2'],
-                c=get_palette("ld")[2], alpha=0.7, edgecolors=get_palette("ld")[2], label='True Negative')  # Blue = negative (doesn't need O2)
+                c=get_palette("ld")[2], alpha=0.8, edgecolors=get_palette("ld")[2], label='True Negative')  # Blue = negative (doesn't need O2)
     plt.scatter(pc_df.loc[mask_fp, 'PC1'], pc_df.loc[mask_fp, 'PC2'],
-                c=get_palette("ld")[3], alpha=0.7, edgecolors=get_palette("ld")[3], label='False Positive')  # Dark blue = Predicted positive but should be negative
+                c=get_palette("ld")[3], alpha=0.8, edgecolors=get_palette("ld")[3], label='False Positive')  # Dark blue = Predicted positive but should be negative
     plt.scatter(pc_df.loc[mask_fn, 'PC1'], pc_df.loc[mask_fn, 'PC2'],
-                c=get_palette("ld")[1], alpha=0.7, edgecolors=get_palette("ld")[1], label='False Negative')  # Dark red = Predicted negative but should be positive
+                c=get_palette("ld")[1], alpha=0.8, edgecolors=get_palette("ld")[1], label='False Negative')  # Dark red = Predicted negative but should be positive
     plt.scatter(pc_df.loc[mask_tp, 'PC1'], pc_df.loc[mask_tp, 'PC2'],
-                c=get_palette("ld")[0], alpha=0.7, edgecolors=get_palette("ld")[0], label='True Positive')  # Red = Postive (needs O2)
+                c=get_palette("ld")[0], alpha=0.8, edgecolors=get_palette("ld")[0], label='True Positive')  # Red = Postive (needs O2)
 
     # Add labels and title
     plt.xlabel(f'PC1 ({explained_var[0]:.1f}%)')

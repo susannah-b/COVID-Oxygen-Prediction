@@ -425,8 +425,11 @@ if basic_training:
     plot_fs_performance(all_results_sorted, graphs_dir) # Plot
 
     ### Determine the best performing models to take to the tuning phase
+    # Check the maximum number of models that are switched on
+    model_flags = [Logistic_regression, SVM, Random_forest, AdaBoost, Gradient_boosting, XGBoost, KNN]
+    n_models_safe = min(sum(model_flags), n_models_to_tune)
     # Extract best model and feature selection from top_model_scores
-    for i in range(0, n_models_to_tune-1): # todo think this errors if more than the number of models - should pick the minimum of those values
+    for i in range(0, n_models_safe): # todo think this errors if more than the number of models - should pick the minimum of those values
         model = scores.iloc[i, 0]
         fs = scores.iloc[i, 1]
         best_models_fs[model] = fs
@@ -996,8 +999,16 @@ with mlflow.start_run(run_name=run_name) as run:
     meta_col_names = X_test.columns[0:meta_cols].tolist()
     if meta_cols != 0:
         meta_cols = remaining_meta(meta_col_names, X_test[selected_features], sample_inves_7=None, graphs_dir=graphs_dir) # Calculate meta columns remaining in order to group features
-    plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, output_data_dir, best_params,
+    try: #todo putting this in a try clause for testing temporarily - this erorred in HPC but might have been fixed in an earlier run
+        plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, output_data_dir, best_params,
                             X_test, y_test, meta_cols)
+    except:
+        print("********************WARNING********************")
+        print("********************WARNING********************")
+        print("********************WARNING********************")
+        print("********************WARNING********************")
+        print("plot feature importance failed. diagnose the issue.") # todo delete after testing
+
 
     # Plot calibration curve
     plot_calibration_curve(y_proba, y_test, type_translation[classifier_type], graphs_dir)
