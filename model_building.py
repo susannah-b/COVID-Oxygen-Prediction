@@ -555,7 +555,7 @@ def objective(params):
             ('classifier', clf)
         ])
 
-        # Use 5-fold cross validation to compute the mean accuracy
+        # Use 5-fold cross validation to compute the mean AUROC
         roc_score_mean = cross_val_score(pipe, X_train, y_train, cv=StratifiedKFold(5, shuffle=True, random_state=42), scoring='roc_auc').mean()  # Reduced to 5-fold for speed
 
         # Log the best accuracy for each model type if improved
@@ -569,14 +569,14 @@ def objective(params):
 ### DEFINE SEARCH SPACES PER FEATURE SELECTOR ########################################################################## # TODO - go over documentation and check which options to include for each parameter, and decide whether to go in base params or the search space - AI-gened for now
 selector_param_spaces = { # Note: for new data, values may need to be tweaked as in feature selection parameter tuning, some fits can fail and crash the script
     'SFM_RF': {
-        'threshold': hp.choice('sfm_rf_threshold', [None, 'median', 'mean'])
+        'threshold': hp.choice('sfm_rf_threshold', [None, 'median', 'mean', 1e-6, 1e-5, 1e-4])
     },
     'RFECV_SVC': {
         'step': hp.uniform('rfecv_step', 0.01, 0.3),
         'min_features_to_select': hp.quniform('rfecv_min_feat', 5, 30, 1)
     },
     'SFM_XGB': {
-        'threshold': hp.choice('xgb_threshold', ['median', 0.5, 1.0])
+        'threshold': hp.choice('xgb_threshold', [None, 'median', 'mean', 1e-6, 1e-5, 1e-4])
     },
     'RFECV_LR': {
         'step': hp.choice('rfecv_lr_step', [0.01, 0.1, 1]),
@@ -892,14 +892,14 @@ with mlflow.start_run(run_name=run_name) as run:
     # Train on full training data
     final_pipeline.fit(X_train, y_train)
 
+    # Track retained features post-preprocessing
+    preprocessor = final_pipeline.named_steps['preprocessor']
+    var_thresh = preprocessor.named_steps['var_thresh']
+    retained_mask = var_thresh.get_support()
+    retained_features = X_train.columns[retained_mask]
+    print("Features after thresholding:", len(retained_features.tolist()))
+    show_features = False # Enable or disable as required
     if show_detail:
-        # Track retained features post-preprocessing
-        preprocessor = final_pipeline.named_steps['preprocessor']
-        var_thresh = preprocessor.named_steps['var_thresh']
-        retained_mask = var_thresh.get_support()
-        retained_features = X_train.columns[retained_mask]
-        print("Features after thresholding:", len(retained_features.tolist()))
-        show_features = False # Enable or disable as required
         if show_features:
             print(retained_features.tolist())
         else:
@@ -908,16 +908,19 @@ with mlflow.start_run(run_name=run_name) as run:
     # Print the selected features post-feature selection method # WARNING Not tested with all methods
     try:
         selector = final_pipeline.named_steps['feature_selector']
-        if hasattr(selector, 'get_support'): # Standard scikit-learn selector
-            support_mask = selector.get_support()
-            selected_features = X_train.columns[support_mask].tolist()
-        elif hasattr(selector, 'support_'): # Other selector types
-            support_mask = selector.support_
-            selected_features = X_train.columns[support_mask].tolist()
-        else: # For other selector types, get features via transformation
-            print("Feature selection method is incompatible with current handling to extract features - results are not printed.")
-            selected_features = X_train.columns.tolist()  # Set selected features to full X_train if not assigned by a feature selector
-        # Print features
+        if selector == 'passthrough':
+            selected_features = retained_features.tolist()
+        else:
+            if hasattr(selector, 'get_support'): # Standard scikit-learn selector
+                support_mask = selector.get_support()
+                selected_features = retained_features[support_mask].tolist()
+            elif hasattr(selector, 'support_'): # Other selector types
+                support_mask = selector.support_
+                selected_features = retained_features[support_mask].tolist()
+            else: # For other selector types, get features via transformation
+                print("Feature selection method is incompatible with current handling to extract features - results are not printed.")
+                selected_features = retained_features.tolist()  # Set selected features to full X_train if not assigned by a feature selector
+            # Print features
         print(f"\nSelected {len(selected_features)} features:")
         print(selected_features)
     except Exception as e:
@@ -1018,7 +1021,7 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Plot decision tree
     class_names = np.array(['No_Oxygen_Need', 'Oxygen_Need'])
-    plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, output_data_dir, graphs_dir)
+    plot_decision_tree(classifier_type, final_pipeline, retained_features, class_names, output_data_dir, graphs_dir)
 
     # Plot a precision-recall curve
     plot_precision_recall(y_proba, y_test, graphs_dir)

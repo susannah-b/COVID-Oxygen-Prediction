@@ -34,15 +34,15 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 180)
 
 # Bools to determine what to print - set here not in config for ease of changing during testing
-sample_inves_1 = False # Metadata info
+sample_inves_1 = True # Metadata info
 sample_inves_2 = False # Metadata vs quant info
 sample_inves_3 = False # Overlap of metadata vs quant
-sample_inves_4 = False # Combining data frames/removing columns
-sample_inves_5 = False # Checking for discrepancies in the metadata
+sample_inves_4 = True # Combining data frames/removing columns
+sample_inves_5 = False # Checking for discrepancies in the metadata #TODO removed?
 sample_inves_6 = False # Data cleaning results within columns
-sample_inves_7 = False # Missingness
+sample_inves_7 = True # Missingness
 sample_inves_8 = False # Numerical conversion
-sample_inves_9 = False # Dropped colums
+sample_inves_9 = True # Dropped columns
 
 # Apply graph styles
 set_graph_style()
@@ -771,6 +771,7 @@ if day_zero:
         filtered_SIDs.append(f"{k}_{v}")
     # Filter to Day 0 samples only
     merged_surrey = merged_surrey[merged_surrey.index.isin(filtered_SIDs)]
+    print("Samples were filtered to Day 0 samples only.")
 
 ### TRAIN/TEST SPLIT - KEEP PATIENT DATA TOGETHER ######################################################################
 #Train test split for Surrey only; ISARIC remains as one dataset for validation

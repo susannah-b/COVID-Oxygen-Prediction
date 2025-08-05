@@ -675,12 +675,12 @@ def basic_train(model, X_train, y_train, identifier, scores_dict, feature_select
             print(f"Error training {identifier} with {fs_name}: {str(e)}")
             model_results[identifier] = [identifier, None, None, None, None, None]
 
-    print(f"***Finished tuning {model} with {selector}. Current date/time is {datetime.now().strftime('%m-%d %H:%M')}***")  # TODO testing
+    print(f"*** Finished tuning {model}. Current date/time is {datetime.now().strftime('%m-%d %H:%M')} ***")  # TODO testing
     # Print results from best feature selection methods
     model_results_df = pd.DataFrame.from_dict(model_results,
                            orient='index',
                            columns=['Model', 'Selector', 'Train Accuracy', 'CV Accuracy', 'Train AUROC',
-                                    'Test AUROC']).sort_values(by=['Test AUROC'], ascending=False)
+                                    'CV AUROC']).sort_values(by=['CV AUROC'], ascending=False)
     print(f"Metrics from {identifier} experimentation:")
     print(model_results_df, "\n")
 
@@ -698,7 +698,7 @@ def basic_train(model, X_train, y_train, identifier, scores_dict, feature_select
 # Plot the performance of feature selectors per model
 def plot_fs_performance(all_results_sorted, graphs_dir):
     # Determine palette based on number of selectors
-    fs_count = len(all_results_sorted)
+    fs_count = len(all_results_sorted["Selector"].unique())
     if fs_count <= 10: # IMPROVE Currently only have ten available options for colour with defined palettes - could add more
         palette = get_palette(f"{fs_count}")
     else:
@@ -707,7 +707,7 @@ def plot_fs_performance(all_results_sorted, graphs_dir):
     plt.figure(figsize=(11, 6))
     sns.lineplot(data=all_results_sorted,
                  x='Model',
-                 y='Test AUROC',
+                 y='CV AUROC',
                  hue='Selector',
                  style='Selector',
                  markers=True,
@@ -717,7 +717,7 @@ def plot_fs_performance(all_results_sorted, graphs_dir):
 
     plt.title('Feature Selector Performance Across Models')
     plt.xlabel('Model')
-    plt.ylabel('Test AUROC Score')
+    plt.ylabel('CV AUROC Score')
     plt.xticks(rotation=15)
     plt.legend(title='Feature Selectors', title_fontsize=10, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)  # TODO test
     plt.tight_layout(rect=[0, 0, 0.85, 1])
@@ -1153,30 +1153,19 @@ def plot_decision_distribution(y_proba, y_test, graphs_dir):
     plt.savefig(f'{graphs_dir}/prediction_distribution.png')
 
 # Plot decision tree for tree-based models
-def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, data_dir, graphs_dir): # IMPROVE - use better styling (my set_styles doesn't seem to apply either). Will tweak if publishing the trees
+def plot_decision_tree(classifier_type, final_pipeline, retained_features, class_names, data_dir, graphs_dir): # IMPROVE - use better styling (my set_styles doesn't seem to apply either). Will tweak if publishing the trees
     ### Plot decision tree for tree-based models #TODO: Basic version - when a final best model is obtained this graph can be fine tuned if useful for the final report
     if classifier_type in ['rf', 'gb', 'xgb']: #TODO untested for gb - and could use refinement of outputs
         try:
             # Extract classifier from pipeline
             clf = final_pipeline.named_steps['classifier']
 
-            # Get feature names after feature selection
-            selector = final_pipeline.named_steps['feature_selector']
-            if selector != 'passthrough':
-                if hasattr(selector, 'get_support'):
-                    mask = selector.get_support()
-                    feature_names = X_train.columns[mask]
-                elif hasattr(selector, 'support_'):
-                    feature_names = X_train.columns[selector.support_]
-            else:
-                feature_names = X_train.columns
-
             # Extract decision tree according to each model type
             if classifier_type == 'rf':
                 estimator = clf.estimators_[0]
                 plt.figure()
                 plot_tree(estimator,
-                          feature_names=feature_names,
+                          feature_names=retained_features,
                           class_names=class_names,
                           filled=True,
                           rounded=True,
@@ -1188,7 +1177,7 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
 
                 # Also export text representation
                 tree_rules = export_text(estimator,
-                                         feature_names=list(feature_names),
+                                         feature_names=list(retained_features),
                                          max_depth=4)
                 with open(f"{data_dir}/first_tree_rules.txt", "w") as f:
                     f.write(tree_rules)
@@ -1197,7 +1186,7 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
                 plt.figure(figsize=(25, 15))
                 estimator = clf.estimators_[0, 0]
                 plot_tree(estimator,
-                          feature_names=feature_names,
+                          feature_names=retained_features,
                           class_names=class_names,
                           filled=True,
                           rounded=True,
@@ -1210,7 +1199,7 @@ def plot_decision_tree(classifier_type, final_pipeline, X_train, class_names, da
 
             elif classifier_type == 'xgb':
                 # Sanitise feature names/convert to list for XGB - Replace non-alphanumeric with underscores
-                feature_names = list(feature_names.astype(str))
+                feature_names = list(retained_features.astype(str))
                 sanitised_feature_names = [re.sub(r'[^a-zA-Z0-9_]', '_', str(f)) for f in feature_names]
                 feature_names = sanitised_feature_names
 
