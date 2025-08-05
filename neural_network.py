@@ -1008,14 +1008,14 @@ with mlflow.start_run(run_name=run_name) as run:
         json.dump(X_train_original.columns.tolist(), f)
     joblib.dump(X_train_original.columns.tolist(), f"{output_data_dir}/input_features.joblib")
 
-    if show_detail: #IMPROVE especially for NN which has a separate pipeline this might not be necessary - as in there's simpler ways
-        # Track retained features post-preprocessing
-        preprocessor = preprocessor.named_steps['preprocessor']
-        var_thresh = preprocessor.named_steps['var_thresh']
-        retained_mask = var_thresh.get_support()
-        retained_features = X_train_original.columns[retained_mask] #todo X_train_original instead of X train i think, as X_train was preprocessed and converted to numpy
-        print("Features after thresholding:", len(retained_features.tolist()))
-        show_features = False  # Enable or disable as required
+    # IMPROVE especially for NN which has a separate pipeline this might not be necessary - as in there's simpler ways
+    # Track retained features post-preprocessing
+    var_thresh = preprocessor.named_steps['var_thresh']
+    retained_mask = var_thresh.get_support()
+    retained_features = X_train_original.columns[retained_mask] #todo X_train_original instead of X train i think, as X_train was preprocessed and converted to numpy
+    print("Features after thresholding:", len(retained_features.tolist()))
+    show_features = False  # Enable or disable as required
+    if show_detail:
         if show_features:
             print(retained_features.tolist())
         else:
@@ -1024,15 +1024,19 @@ with mlflow.start_run(run_name=run_name) as run:
     # Print the selected features post-feature selection method # WARNING Not tested with all methods
     try:
         selector = preprocessor.named_steps['feature_selector']
-        if hasattr(selector, 'get_support'):  # Standard scikit-learn selector
-            support_mask = selector.get_support()
-            selected_features = X_train_full.columns[support_mask].tolist()
-        elif hasattr(selector, 'support_'):  # Other selector types
-            selected_features = X_train_full.columns[selector.support_].tolist()
-        else:  # For other selector types, get features via transformation
-            print("Feature selection method is incompatible with current handling to extract features - results are not printed.")
-            selected_features = X_train_full.columns.tolist() # Set selected features to full X_train if not assigned by a feature selector
-        # Print features
+        if selector == 'passthrough':
+            selected_features = retained_features.tolist()
+        else:
+            if hasattr(selector, 'get_support'):  # Standard scikit-learn selector
+                support_mask = selector.get_support()
+                selected_features = retained_features[support_mask].tolist()
+            elif hasattr(selector, 'support_'):  # Other selector types
+                support_mask = selector.support_
+                selected_features = retained_features[support_mask].tolist()
+            else:  # For other selector types, get features via transformation
+                print("Feature selection method is incompatible with current handling to extract features - results are not printed.")
+                selected_features = retained_features.tolist() # Set selected features to full X_train if not assigned by a feature selector
+            # Print features
         print(f"\nSelected {len(selected_features)} features:")
         print(selected_features)
     except Exception as e:

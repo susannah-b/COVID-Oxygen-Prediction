@@ -14,9 +14,6 @@ import os
 from functions import convert_categories, normalise_MS, impute_MICE, encode_categorical, encode_y, \
     plot_missingness_ms, set_graph_style
 
-# WARNING untested for validate False after some changes to the file structure
-# WARNING This script is largely untested after changes to structure due to computational limitations. Check it runs fine on HPC - is the output data what you expect?
-
 # Set pandas to display all columns
 pd.set_option('display.max_columns', None)
 

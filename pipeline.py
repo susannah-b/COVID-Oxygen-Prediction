@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 import yaml
 import shutil
+import sys
 
 ### READ IN CONFIG FILE ################################################################################################
 # Create config fil if it doesn't exist
@@ -101,8 +102,27 @@ if build_NN:
 if build_ML:
     print("\n\nBuilding traditional machine learning model...\n")
     # Run model_building.py - builds the model using the Surrey data
-    process = subprocess.run(['python', 'model_building.py', '--run_name', run_name, '--from_pipeline'],text=True)
+    process = subprocess.Popen(['python', 'model_building.py', '--run_name', run_name, '--from_pipeline'], #Using Popen here due to long run times
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1  # Line-buffered
+    )
+
+    # Print output in real-time
+    for line in process.stdout:
+        print(line, end='', flush=True)
+
+    # Get stderr content after completion
+    _, stderr_content = process.communicate()
+
+    # Write stderr to its destination
+    if stderr_content:
+        sys.stderr.write(stderr_content)
+        sys.stderr.flush()
+
     # Check if failed
+    return_code = process.wait()
     if process.returncode != 0:
         print("Warning: model_building.py failed")
         exit(1)
