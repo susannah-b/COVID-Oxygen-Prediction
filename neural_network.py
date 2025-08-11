@@ -544,7 +544,7 @@ def objective(params):
         # Incorporate required preprocessing/FS steps and the model
         hp_preprocessor = Pipeline([
             ('int_to_float', IntToFloatTransformer()),
-            ('var_thresh', VarianceThreshold(threshold=0.0)),
+            ('var_thresh', VarianceThreshold(threshold=threshold)),
             ('scaler', StandardScaler()),
             ('feature_selector', selector if feature_selection else 'passthrough')
         ])
@@ -619,15 +619,14 @@ def objective(params):
 ### DEFINE SEARCH SPACES PER FEATURE SELECTOR ##########################################################################
 selector_param_spaces = { # Note: for new data, values may need to be tweaked as in feature selection parameter tuning, some fits can fail and crash the script
     'SFM_RF': {
-        'threshold': hp.choice('sfm_rf_threshold', [None, 'median', 'mean'])
+        'threshold': hp.choice('sfm_rf_threshold', [None, 'median', 'mean', 1e-6, 1e-5, 1e-4])
     },
     'RFECV_SVC': {
         'step': hp.uniform('rfecv_step', 0.01, 0.3),
         'min_features_to_select': hp.quniform('rfecv_min_feat', 5, 30, 1)
     },
     'SFM_XGB': {
-        'max_features': hp.uniform('xgb_max_feat', 0.1, 1.0),
-        'threshold': hp.choice('xgb_threshold', ['median', 0.5, 1.0])
+        'threshold': hp.choice('xgb_threshold', [None, 'median', 'mean', 1e-6, 1e-5, 1e-4])
     },
     'RFECV_LR': {
         'step': hp.choice('rfecv_lr_step', [0.01, 0.1, 1]),
@@ -761,7 +760,7 @@ with mlflow.start_run(run_name=hyperopt_name) as run:
     hyper_run_id = run.info.run_id
     store_hyp_id = f"Run {run_name} for hyperparameter training completed. Run ID is {hyper_run_id}. See nested runs for individual trials"
 
-# Print the best accuracies for each model type
+# Print the best accuracies for each model type # IMPROVE - remnant of TML structure, could be removed, or implement a system that does test more unique model structures
 print("\nHighest network AUROC on train data:")
 best_roc_df = pd.DataFrame(list(best_roc.items()), columns=['Models', 'Highest AUROC'])
 print(best_roc_df)
@@ -1089,7 +1088,7 @@ with mlflow.start_run(run_name=run_name) as run:
 
 
     # Log combined model
-    model_info = mlflow.pyfunc.log_model(artifact_path="best_model",
+    model_info = mlflow.pyfunc.log_model(artifact_path="best_model", # WARNING I think the model_output file combined the TML and NN models, so certain files are overwritten? Needs more investigation but thinks like logging models and params should be done to SEPARATE files or copied to them at the end. FIX THIS before finishing the project.
                             python_model=OxygenPredictor(),
                             artifacts={
                                 "preprocessor": preprocessor_path,

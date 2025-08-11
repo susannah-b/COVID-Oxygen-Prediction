@@ -113,7 +113,7 @@ if enable_tracking:
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "135_0731-001831_HPC" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "2_0806-180711_V+D-T2B[M-P-C-R-]M-Mo[All]FS[All-2]NFS[NONE]E+_V+_but_no_meta_MINIMAL_MFS" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
 else:
     model_name = run_name
 
@@ -129,7 +129,6 @@ input_features = joblib.load(features_path)
 # Load selected features
 features_path_2 = f"{model_output}/training_data/ML/selected_features.joblib"
 selected_features = joblib.load(features_path_2)
-print(features_path_2)
 
 # Set MLflow logging details
 if enable_tracking: # Have to use a unique name or it creates issues with artifact tracking
@@ -239,9 +238,13 @@ with mlflow.start_run(run_name=val_run_name) as run:
 
     # Plot feature importance # IMPROVE - don't technically need this for exval as it should be the same
     meta_col_names = X_data.columns[0:meta_cols].tolist() # todo check this sections calculation is accurate
-    meta_cols = remaining_meta(meta_col_names, X_data[selected_features], sample_inves_7=None, graphs_dir=graphs_dir)  # Calculate meta columns remaining in order to group features # Note: untested that read in values are correct
-    plot_feature_importance(classifier_type, model, selected_features, graphs_dir, output_data_dir, model.get_params(),
+    if meta_cols != 0:
+        meta_cols = remaining_meta(meta_col_names, X_data[selected_features], sample_inves_7=None, graphs_dir=graphs_dir)  # Calculate meta columns remaining in order to group features # Note: untested that read in values are correct
+    try:
+        plot_feature_importance(classifier_type, model, selected_features, graphs_dir, output_data_dir, model.get_params(),
                             X_data, y_data, meta_cols)
+    except:
+        print("Could not print feature importance.")
 
     # Plot calibration curve
     plot_calibration_curve(y_proba, y_data, type_translation[classifier_type], graphs_dir)
