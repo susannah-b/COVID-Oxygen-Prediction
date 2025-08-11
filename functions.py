@@ -1118,7 +1118,7 @@ def plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir):
         ax.set_xlabel("Mean predicted probability")
         ax.set_ylabel("Fraction of positives")
         ax.legend(loc='upper left')
-        plt.savefig(f"{graphs_dir}/calibration_curve.png")
+        plt.savefig(f"{graphs_dir}/calibration_curve.png") # WARNING this overwrites TML when running NN! save to unique folders/names
         plt.close(fig)
 
         # Log Brier score
@@ -1395,5 +1395,24 @@ def grouped_shap(shap_vals, features, groups):
     shap_grouped = shap_Tdf.groupby('group').sum().T
     return shap_grouped
 
+### OTHER ##############################################################################################################
+def plot_metrics_heatmap(metrics, output_dir, string):
+    plt.figure(figsize=(9, (9/6)*len(metrics)))
+    ax = sns.heatmap(
+        metrics,
+        annot=True,
+        fmt=".2f",
+        cmap='Greens',
+        linewidths=.5,
+        cbar=False
+    )
 
+    # Customize labels
+    ax.set_title(f'{string} Evaluation Metrics', fontsize=14)
+    ax.set_xlabel('Evaluation metrics', fontsize=12)
+    ax.set_ylabel('Model pipeline', fontsize=12)
+    # Save figure
+    plt.savefig(f"{output_dir}/{string}_heatmap.png")
+
+########################################################################################################################
 plt.close("all")
