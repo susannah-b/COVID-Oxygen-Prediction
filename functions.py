@@ -28,12 +28,12 @@ from itertools import repeat, chain
 ### CHART STYLES #######################################################################################################
 # Return specified colour palette so palettes can be accessed globally
 def get_palette(palette): #WARNING - check that no
-    # Colour palettes # IMPROVE - more distance for blues, could add less range in R-Y section
+    # Colour palettes # IMPROVE - more distance for blues, could add less range in R-Y section, double check correct colours were selected (7 was adjusted, others should follow)
     colour_palette_10 = ["#E52B3E", "#DE5474", "#EE7956", "#F7C552", "#72C872", "#0EBC8D", "#129B95", "#167B9C",
                          "#2F6B9F", "#BA439F"] # Rainbow
     colour_palette_9 = ["#E52B3E", "#DE5474", "#EE7956", "#F7C552", "#72C872", "#0EBC8D", "#129B95", "#2F6B9F", "#BA439F"] # Near rainbow
     colour_palette_8 = ["#E52B3E", "#EE7956", "#F7C552", "#0EBC8D", "#129B95", "#167B9C", "#485BA3", "#BA439F"] #ROYGBPP
-    colour_palette_7 = ["#E52B3E", "#EE7956", "#F7C552", "#0EBC8D", "#129B95", "#167B9C", "#485BA3"] # ROYGBP
+    colour_palette_7 = ["#E52B3E", "#EE7956", "#F7C552", "#72C872", "#129B95", "#2F6B9F", "#BA439F"] # ROYGBP
     colour_palette_6 = ["#E52B3E", "#EE7956", "#F7C552", "#72C872", "#129B95", "#2F6B9F"] #ROYGGB
     colour_palette_5 = ["#E52B3E", "#EE7956", "#F7C552", "#0EBC8D", "#167B9C"] #ROYGB
     colour_palette_4 = ["#E52B3E", "#F7C552", "#0EBC8D", "#485BA3"] # RYGB
@@ -1396,8 +1396,8 @@ def grouped_shap(shap_vals, features, groups):
     return shap_grouped
 
 ### OTHER ##############################################################################################################
-def plot_metrics_heatmap(metrics, output_dir, string):
-    plt.figure(figsize=(9, (9/6)*len(metrics)))
+def plot_metrics_heatmap(metrics, output_dir, string, conf_int):
+    plt.figure(figsize=(9, (6/7)*len(metrics))) #IMPROVE size calc doesn't work for val and had to be manually changed
     ax = sns.heatmap(
         metrics,
         annot=True,
@@ -1407,10 +1407,28 @@ def plot_metrics_heatmap(metrics, output_dir, string):
         cbar=False
     )
 
+    # Add confidence intervals with smaller font
+    for i in range(metrics.shape[0]):
+        for j in range(metrics.shape[1]):
+            label = conf_int.iloc[i, j]
+
+            # Determine colour
+            if metrics.iloc[i,j] > 0.73: # IMPROVE not ideal to hardcode
+                colour = 'powderblue'
+            else:
+                colour = 'darkblue'
+
+            # Add CI text below the main metric value
+            ax.text(j + 0.5, i + 0.8, f"{label}",
+                    ha='center', va='center', fontsize=8, color=colour)
+
     # Customize labels
     ax.set_title(f'{string} Evaluation Metrics', fontsize=14)
     ax.set_xlabel('Evaluation metrics', fontsize=12)
     ax.set_ylabel('Model pipeline', fontsize=12)
+    ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=10)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=25, ha='right', fontsize=10)
+
     # Save figure
     plt.savefig(f"{output_dir}/{string}_heatmap.png")
 
