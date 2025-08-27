@@ -1,26 +1,37 @@
 # Prediction of the need for oxygen therapy in COVID-19 patients using patient metadata and mass spectrometry of serum proteins
 
 ## Introduction
-The data originates from a Surrey hospital where COVID-19 patients were sampled, and will later be expanded to include other sites. The project goal is the predict the 'O2 req.' column, which states the patients current need for oxygen (Y/N) at the time of sampling. (TODO: more detail on data, eg surrey timepoints, isaric pmeta crf1a timepoint vs isaric.csv 'day 1' vs unspecified)
-TODO Describe ISARIC dataset.
-The majority of patients were sampled only upon admission, but data does exist at other timepoints for some paricipants, which may lead to estimation of high-risk patients for requiring oxygen therapy. 
+The goal of this project is the predict the 'O2 req.' column within the provided clinical trials datasets, which states the patients current need for oxygen (Y/N) at the time of sampling. The data consists of two datasets that were produced as part of studies on hospitalised COVID-19 patients: the training dataset was sourced from a Surrey hospital, and the validation dataset was sourced from the ISARIC foundation. Each dataset contains a number of general patient health features (Age, Gender, IgG levels, etc.) and hundreds of serum protein intensities derived from mass spectrometry.
 
-In this project, we will consolidate the patient data, pre-process the data (including imputation of missing values with MICE), select the most relevant features, select model candidates, and build a hyperparameter-tuned/cross-validated model for final prediction.
+The datasets are much smaller than advised for the training of a machine learning model - espeically one with such a large number of features - so the results presented here are intended as exploratory, to illustrate the potential of a machine learning model when applied to clinical omics data. There is also a large mismatch between the features of the training and validation dataset, and subsequently within the model there is an option to enable or disable validation-compatibility, which removes or retains the features that are not part of the valdiation set.
 
-WIP: Also building a neural network as an alternative form of evaluation.
+In this project, we will consolidate the patient data, pre-process the data (including imputation of missing values with MICE), select the most relevant features, select model candidates, and build a hyperparameter-tuned/cross-validated model for final prediction. For each run of the model development pipeline, a neural network and a traditional machine learning model will be built, with parameters tuned and evaluated as part of the model development pipeline.
+
 
 ## Files
-### Traditional Machine Learning model:
-- **default_config.yaml:** Make a copy of this file (named config.yaml) or run data_preprocessing.py to make a default 'config.yaml' for which values can be changed. Define settings for the model run here. Note: some setting remain embedded within the script to allow for ease of testing. Each setting is explained in the file comments, for example the 'validate' setting which modifies the training dataset to be compatible with the validation dataset. 
-- **typos.yaml:** Dictionaries of changed to be made to correct typos/make generalisations (e.g. consolidating vitamin B treatment types) within the four comma-separated text columns in the Surrey metadata.
-- **pipeline.py:** Wrapper script to run the entire model development pipeline in order. The input files will be stored in an 'inputs/\[model_name]' directory before copying the final outputs to the model_outputs\[model_name] directory to prevent overwriting. 
+### Automated pipeline scripts
+- **default_config.yaml:** Make a copy of this file (named config.yaml) or run data_preprocessing.py to make a default 'config.yaml' for which values can be changed. Define settings for the model run here before running the pipeline.
+- **typos.yaml:** Dictionaries of changes to be made to correct typos/make generalisations (e.g. consolidating vitamin B treatment types) within the four comma-separated text columns in the Surrey metadata. Only relevant if the various 'text_features' options are enabled (see default config.yaml file).
+- **pipeline.py:** Script to run the entire model development pipeline in order. The input files will be stored in an 'inputs/\[model_name]' directory before copying the final outputs to the model_outputs\[model_name] directory to prevent overwriting.
+- - **functions.py:** Required functions for the project, including setting the default graphs styles/palettes.
 
-If wanting to run individual segments of the pipeline, then scripts should be run in the following order: TODO update this for NN
+## Individual scripts
+If wanting to run individual segments of the pipeline, then scripts should be run in the following order. The inputs and outputs used are stored in the current working directory, and will be overwritten if run multiple times (with the exception of the model_output file if the option is enabled, in which case certain output files will be copied there instead). 
 - **feature_engineering.py:** Initial cleaning, consolidation, and train-test split of the patient data for Surrey and ISARIC. 
 - **data_preprocessing.py:** Imputing, encoding, and separating into features and target variable.
-- **model_building.py:** Scaling, feature selection, identification of candidate models, hyperparameter tuning, training of the final model, prediction, and evaluation of the model.
-- **external_validation.py:** Fitting the model to the ISARIC validation dataset.
-- **functions.py:** Required functions for the project.
+- Model building scripts:
+  - **model_building.py:** Scaling, feature selection, identification of candidate models, hyperparameter tuning, training of the final model, prediction, and evaluation of the model.
+    - **external_validation.py:** Fitting the model to the ISARIC validation dataset.
+  - **neural_network.py:** Scaling, feature selection, early stopping determination, hyperparameter tuning, training of the final model, prediction, and evaluation of the model.
+  - **external_validation_NN.py:** Fitting the model to the ISARIC validation dataset.
 
-### Traditional Machine Learning model:
-- **neural_network.py:** in-progress script for the neural network.
+Currently, the **extra_outputs.py** and **extra_graphs.py** generate additional graphs (e.g. overlapping ROC curves), statistical tests (e.g. DeLong's), or re-generate information that has been overwritten by the main scripts. Ideally, these would be incorporated more elegantly into the main scripts where possible (and overwriting issues fixed), such as in cases where certain data is summarised manually before using as an input. However, due to the time constraint imposed upon the project, currently these remain as separate scripts.
+
+## Model outputs
+The exact outputs vary based on data configurations and random sampling, however an example of the pipeline run with seven different configuratiions is shown below. 'V+/-' represents whether the pipeline was made to be validation compatible or not, 'M+/-' represents whether the general patient health data ('metadata') was included or not, and 'D+/-' represents whether timepoints beyond Day 0 were included or not.
+
+AUROC scores on the testing data of the training set:
+![Test Heatmap](images/test_heatmap.png)
+
+AUROC scores on the validation set:
+![Validation Heatmap](images/validation_heatmap.png)
