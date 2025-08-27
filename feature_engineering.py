@@ -29,7 +29,7 @@ from functions import check_abnormal_SIDs, calculate_overlaps, check_columns, ch
     plot_row_missingness, plot_missingness_msno, investigate_null, remaining_meta, categorise_cols, numerical_check_nan, \
     plot_class_distribution, text_to_binary, replace_values, set_graph_style
 
-# Set pandas to display all columns and longer rows # IMPROVE remove in final version
+# Set pandas to display all columns and longer rows
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 180)
 
@@ -38,7 +38,7 @@ sample_inves_1 = True # Metadata info
 sample_inves_2 = False # Metadata vs quant info
 sample_inves_3 = False # Overlap of metadata vs quant
 sample_inves_4 = True # Combining data frames/removing columns
-sample_inves_5 = False # Checking for discrepancies in the metadata #TODO removed?
+# sample_inves_5 = False # Checking for discrepancies in the metadata #TODO now removed; update other sample_inves numbering accordingly
 sample_inves_6 = False # Data cleaning results within columns
 sample_inves_7 = True # Missingness
 sample_inves_8 = False # Numerical conversion
@@ -94,8 +94,8 @@ regular_meds = config['feature_engineering']['text_features']['Regular_meds'] # 
 min_count = config['feature_engineering']['min_count'] # Minimum frequency of a csv value in the column to convert it into a binary column (otherwise excluded from the dataset)
 
 # Override text to binary expansions if validating
-# IMPROVE currently I don't have equivalent columns set for isaric so we switch off these settings if validation is on.
-#  Can be added later but requires finding/renaming matching columns if each t2b bool is enabled, and updating the rest of scripts/other scripts to acknowledge the added cols
+# IMPROVE currently I don't have the equivalent columns set for isaric so we switch off these settings if validation is on.
+#  Could be added later but requires finding/renaming matching columns if each t2b bool is enabled, and updating the rest of scripts/other scripts to acknowledge the added cols
 if validate:
     medication_48hr = False
     pre_symptoms = False
@@ -106,9 +106,7 @@ if validate:
 np.random.seed(42)
 
 ########################################################################################################################
-# todo - change cwd to github folder; currently assumes it's in there already. maybe for other scripts. including pipeline.py
-
-# Read in data #IMPROVE avoid hardcoding
+# Read in data # IMPROVE avoid hardcoding
 quant_file = Path(__file__).parent / "Surrey_Files" / "KR_Covid_DIA_Pt_gene_Serum30_Report_Protein Quant (Pivot).xls"
 s_meta_file = Path(__file__).parent / "Surrey_Files" / "Surrey_Metadata_master_spreadsheet_130622_edit2.csv"
 isaric_file = Path(__file__).parent / "ISARIC_Files" / "ISARIC.csv"
@@ -153,7 +151,7 @@ if sample_inves_1:
     print("\nCheck the number of ISARIC samples in the metadata:")
     print(len(isaric))
 
-# Removing duplicates in the Surrey metadata file # TODO could check quant too. And maybe go over the dropbox metadata file for more potential issues. Including these reenlistements
+# Removing duplicates in the Surrey metadata file
 #  Several participants were re-enlisted: 403>434, 404>411, and 405>410. This leads to duplicate sample IDs (434 is
     #  slightly different due to one ID missing the middle number, but should still be removed as a duplicate)
     # Therefore we will remove the outdated MABRA IDs
@@ -339,7 +337,6 @@ merged_surrey.columns = merged_surrey.columns.str.strip() # Already done for Sur
 merged_isaric.columns = merged_isaric.columns.str.strip()
 
 # Change Sample column to be the updated SIDs currently stored as row indexes (so can reset index later)
-# merged['Sample'] = merged.index # Note I later remove this column but left this in the code in case it's useful later # IMPROVE - remove if not needed
 if sample_inves_4:
     print("Is the data frame the length we expect (# of overlapping samples)?")
     print(len(merged_surrey))  # Answer: Yes
@@ -361,9 +358,9 @@ remove_cols = ['Sample', # Stored as row indexes
                'Date of Hospital Admission', # Not relevant to health
                'Date of MOST RECENT Covid Positive Swab', # Not relevant to health
                'Date of first Mabra samples collected',
-               'Date of vaccination', # TODO this column is useful for time since vaccination and Y/N vaccinated, however for now removing as 1) it's highly missing anyway and 2) Need to do more processing before inclusion. But come back to
+               'Date of vaccination', # TODO this column is useful for time since vaccination and Y/N vaccinated, however for now removing as 1) it's highly missing anyway and 2) Need to do more processing before inclusion.
                'Ethnicity', # Largely biased towards white so would be misleading
-               #'Height (cm)', # TODO on second thought kept this in, but not sure if it is eg correlated with Gender and leads to bias (dropped with isaric regardless)
+               #'Height (cm)', # Not sure if it is eg correlated with Gender and leads to bias (dropped with isaric regardless)
                'Hospital site', # TODO Possibly could impact care but I think a confounding feature? Maybe try with and without
                'MABRA ID', # Irrelevant
                'MABRA ID.1', # Irrelevant
@@ -392,7 +389,7 @@ remove_cols = ['Sample', # Stored as row indexes
                #  time since infection/positive for each time point, but if the target variable is only recorded at D0 then I think it's moot.
                #'Weight (kg)', #TODO kept in for now but should test with and without
                'Dates of repeat samples', # TODO might be useful for getting timepoint data alongisde other cols, but for now removing
-               #'Days_between' #TODO can drop this if doing D0 only - take out of remove_isaric if so
+               #'Days_between' # TODO can drop this if doing D0 only - take out of remove_isaric if so
                ]
 
 # If not doing text to binary conversion (which is also switched off when validating), add to the removal list:
@@ -420,7 +417,7 @@ remove_isaric = ['Chol', # Unsure on this columns meaning, but I can't see anyth
                  'Survived Admission', # Couldn't find relevant column in ISARIC data
                  'Weight (kg)', # Exists in PHOSP but is NaN for all
                  'Days_between' # Not relevant as only doing the first time point (day 1/admission where specific)
-                 # WARNING: If I do decide to include some texttobinary (see below) columns in the validation set, edit this
+                 # WARNING: If I do decide to include some texttobinary (see below) columns in the validation set, edit this to include new columns (likely through automated list appending)
                  ]
 
 if validate:
@@ -594,7 +591,7 @@ merged_surrey.replace({'Survived Admission' : ['Y ']}, 'Y', inplace = True)
 merged_surrey.replace({'Survived Admission' : ['N ']}, 'N', inplace = True)
 if not validate: # Otherwise these columns are dropped - PMBC No Calculation is the only one that doesn't silently error so must be handled separately
     # PBMC No Calculation
-    merged_surrey.replace({'PBMC No Calculation': [' N/A ']}, np.nan, inplace=True)  # TODO I think this is a valid approach; N/A is used when PMBC is either empty or too high so it does combine those two which might not be ideal, but I want to keep ordinality
+    merged_surrey.replace({'PBMC No Calculation': [' N/A ']}, np.nan, inplace=True)  # IMPROVE I think this is a valid approach; N/A is used when PMBC is either empty or too high so it does combine those two which might not be ideal, but I want to keep ordinality
     merged_surrey['PBMC No Calculation'] = pd.to_numeric(merged_surrey['PBMC No Calculation'].str.replace(',', ''), errors='coerce')  # Convert strings to numeric, else NaN - IMPROVE beware if doing for new data to not accidentally convert any text to NaN
 
 ### Clean up values for ISARIC data - change to match Surrey
@@ -673,7 +670,7 @@ merged_null_before_surrey = plot_row_missingness(merged_surrey, meta_cols_surrey
 merged_null_before_isaric = plot_row_missingness(merged_isaric, meta_cols_isaric, sample_inves_7, validation_graphs, 'ISARIC')
 
 ### CLEAN UP COLUMN MISSINGNESS ########################################################################################
-# Plot missingness before filtering (full dataset) #TODO some plots are blank - possibly due to too much data
+# Plot missingness before filtering (full dataset) #TODO some plots are blank due to too much data for the graph size
 plot_missingness_msno(merged_surrey, 'Surrey', meta_cols_surrey, training_graphs)
 plot_missingness_msno(merged_isaric, 'ISARIC', meta_cols_isaric, validation_graphs)
 
@@ -799,7 +796,3 @@ plt.close('all')
 # And/or plot histograms of the data to check it looks normal (probably also statistically normal otherwise transform?)
 # Remove certain obvious outliers if needed - must be actual methods for this
 # In other model I plotted graphs for a lot of the variables. See what could be useful here
-
-# TODO PCA at different stages of data cleaning/feature selection (before/after filtering, after FS - but need numerical values
-
-# TODO Skimmed over data cleaning a lot. Transforming? Outlier removal? Which steps remain

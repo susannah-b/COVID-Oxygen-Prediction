@@ -6,25 +6,17 @@ from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.base import BaseEstimator, TransformerMixin
 import yaml
 import mlflow.sklearn
-from mlflow.models.signature import infer_signature
 import matplotlib.pyplot as plt
-import warnings
-from functions import basic_train, port_in_use, pca_pre_post_fs, plot_learning_curve, \
-    plot_roc_auc, plot_feature_importance, plot_calibration_curve, plot_decision_tree, plot_precision_recall, \
-    plot_pca_predicted, plot_confusion_matrix, plot_fs_performance, plot_pca_original, plot_pca_test_unprocessed, \
-    remaining_meta, grouped_shap, set_graph_style
-import re
+from functions import port_in_use, pca_pre_post_fs, plot_roc_auc, plot_calibration_curve, plot_precision_recall, \
+    plot_pca_predicted, plot_confusion_matrix, plot_pca_test_unprocessed, remaining_meta, grouped_shap, set_graph_style
 import os
-from datetime import datetime
 import subprocess
 import time
 import shutil
-import json
 import joblib
 import argparse
 from sklearn.metrics import confusion_matrix, classification_report
 import shap
-from sklearn.base import clone
 from mlflow.tracking import MlflowClient
 
 # Apply graph styles
@@ -138,7 +130,7 @@ def model_predict(X):
         # Return probabilities (sigmoid output)
         return torch.sigmoid(logits).numpy()
 
-# IMPROVE: this is defined in both the training script and here. move to functions
+# TODO: this is defined in both the training script and here. Move to functions
 
 ### MLFLOW TRACKING ####################################################################################################
 if not port_in_use(host, port):
@@ -207,7 +199,7 @@ val_run_name = f"{model_name}_validation"
 
 # Start MLflow run
 with mlflow.start_run(run_name=val_run_name) as run:
-    print(f"\nNow predicting oxygen need for the validation data using the neural network model.") # todo {classifier_type} post b_t
+    print(f"\nNow predicting oxygen need for the validation data using the neural network model.") # TODO incorporate {classifier_type} as with the traditional model
     mlflow.set_tag("Run name", val_run_name) # Set tag to custom run id so it's searchable in the MLFlow UI
     mlflow.set_tag("Phase", "Model validation")
     # mlflow.set_tag("Hyperopt MLflow run", hyperopt_name) # Note: haven't included the associated hyperopt selection run for OG model but could be determined if useful
@@ -257,7 +249,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
     # Define path for possible pre-existing results file
     if not args.from_pipeline:
         ML_prediction_path = Path(
-            f"{data_dir}/ML/Prediction_results_validation_data.csv")  # Saved to cwd training data file - WARNING: this will add results to the latest ML results if present. The config for these may not be the same. To properly store based on run name (and same config), use the wrapper script.
+            f"{data_dir}/ML/Prediction_results_validation_data.csv")  # Saved to cwd training data file - WARNING: this will add results to the latest ML results if present. The config for these may not be the same. To properly store based on run name (and same config), use the wrapper script. TODO: correct this
     else:
         ML_prediction_path = Path(
             f'model_output/{run_name}/training_data/ML/Prediction_results_validation_data.csv')  # Saved to input storage file for ML
@@ -380,7 +372,7 @@ if track_final: #IMPROVE: take out useful individual subfolders vs whole folder 
     key_metrics = {
         'NN Validation Accuracy': test_accuracy,
         'NN Validation F1': test_f1,
-        'N Validation AUROC': test_roc, #TODO fix typo - can't change when existing HPC runs are ongoing
+        'NN Validation AUROC': test_roc,
     }
     # Update existing metrics
     for key, value in key_metrics.items():

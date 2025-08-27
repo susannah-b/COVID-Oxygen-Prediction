@@ -11,8 +11,8 @@ import yaml
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-from functions import convert_categories, normalise_MS, impute_MICE, encode_categorical, encode_y, \
-    plot_missingness_ms, set_graph_style
+from functions import convert_categories, normalise_MS, impute_MICE, encode_categorical, encode_y, plot_missingness_ms, \
+    set_graph_style
 
 # Set pandas to display all columns
 pd.set_option('display.max_columns', None)
@@ -60,8 +60,8 @@ num_datasets = config['data_preprocessing']['num_datasets_imputation'] # num_dat
 iterations = config['data_preprocessing']['iterations_imputation'] # iterations for miceforest imputation
 imputed_data_config = config['data_preprocessing']['imputed_data_config']
 np.random.seed(42)
-### PREPARE THE DATA ###################################################################################################
 
+### PREPARE THE DATA ###################################################################################################
 # Create output directories for the data
 if not args.from_pipeline: # If calling as a standalone script, save to the current working directory
     training_data = 'training_data' # Combine with other training graphs if using training data
@@ -132,7 +132,7 @@ if drop_metadata:  # Drop the metadata if bool is true
         meta_cols_isaric = 0
         print(f"Metadata was dropped from the ISARIC dataset; if unintended, disable drop_metadata in the script.")
 
-# Update config for later access # WARNING if dropping metadata, this will cause issues upon re-running. Run feature engineeering first to re-assign.
+# Update config for later access # WARNING: if dropping metadata, this will cause issues upon re-running if not running within the pipeline. Run feature engineeering first to re-assign.
 with open(config_path, "w") as f:
     config["general"]["training_meta_cols"] = meta_cols_surrey
     if validate:
@@ -153,7 +153,6 @@ if show_testing:
     if validate:
         print("\nNumeric features in ISARIC data:", numeric_cols_i)
         print("\nCategorical features in ISARIC data:", cat_cols_i)
-    # TODO still not sure if chol should be in here or not - investigate
 
 # Check which test categories are binary/ordinal - use full dataset to check all regardless of train/test split
 if show_testing:
@@ -210,7 +209,7 @@ if validate:
     isaric_X = convert_categories(isaric_X, ordinal_cats)
     isaric_y = convert_categories(isaric_y, ordinal_cats)
 
-### NORMALISE PROTEOMICS DATA ########################################################################################## #TODO is it better to impute first?
+### NORMALISE PROTEOMICS DATA ##########################################################################################
 surrey_X_train_quant = normalise_MS(surrey_X_train, meta_cols_surrey)
 X_test_quant = normalise_MS(X_test, meta_cols_surrey)
 if validate:
@@ -222,25 +221,18 @@ plot_missingness_ms(surrey_X_train_quant, training_graphs, 'Surrey')
 if validate:
     plot_missingness_ms(isaric_X_quant, validation_graphs, 'ISARIC')
 
-# Set imputed data file names - Note: modify the 'after_imputation' files in training data if running imputation only, in order to use a specific file for imputation. Set config accordingly. # IMPROVE automate pipeline.py so you can run up to imputation only; perhaps output to another file
+# Set imputed data file names - Note: modify the '*after_imputation' files in the training data directory if running
+# imputation only, in order to use a specific file for imputation. Set the config.yaml accordingly. # IMPROVE automate pipeline.py so you can run up to imputation only; perhaps output to another file
 imputed_surrey_train = f"{training_data}/Surrey_train_after_imputation.csv" # TODO could be modified to be automatically selected based on variable - eg whether validate/t2b/D0/drop_meta is true or not. Would need to output certain configurations to /imputed_data automatically with required suffixes
 imputed_surrey_test = f"{training_data}/Surrey_test_after_imputation.csv"
 if validate:
     imputed_isaric = f"{validation_data}/ISARIC_after_imputation.csv"
 
 if impute:
-    try: #todo testing
-        surrey_X_train = impute_MICE(surrey_X_train, imputed_surrey_train, 'Surrey_Train', num_datasets, iterations, training_graphs)
-        X_test = impute_MICE(X_test, imputed_surrey_test, 'Surrey_Test', num_datasets, iterations, training_graphs)
-        if validate:
-            isaric_X = impute_MICE(isaric_X, imputed_isaric, 'ISARIC',num_datasets , iterations, validation_graphs)
-    except:
-        print("Surrey columns:")
-        print(surrey_X_train.columns)
-        print("Test columns:")
-        print(X_test.columns)
-        print("ISARIC columns:")
-        print(isaric_X.columns)
+    surrey_X_train = impute_MICE(surrey_X_train, imputed_surrey_train, 'Surrey_Train', num_datasets, iterations, training_graphs)
+    X_test = impute_MICE(X_test, imputed_surrey_test, 'Surrey_Test', num_datasets, iterations, training_graphs)
+    if validate:
+        isaric_X = impute_MICE(isaric_X, imputed_isaric, 'ISARIC',num_datasets , iterations, validation_graphs)
 
 else: # If not imputing, read in the data
     print("Skipping imputation; using already produced imputed file. Otherwise set impute = True")

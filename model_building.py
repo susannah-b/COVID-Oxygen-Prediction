@@ -43,14 +43,7 @@ import joblib
 import argparse
 from mlflow.tracking import MlflowClient
 
-# todo clean up at end
-
-#IMPROVE Break script into smaller parts
-
-# WARNING - suppress MLflow warning and precision warning - fix later
-# warnings.filterwarnings("ignore", category=UserWarning, module="mlflow.types.utils")
-# from sklearn.exceptions import UndefinedMetricWarning
-# warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
+# IMPROVE Break script into smaller parts - eg basic training as it's own script
 
 # Bool to show additional detail
 show_detail = False
@@ -82,7 +75,7 @@ print(f"Starting run {run_name}\n")
 if not args.from_pipeline:
     config_path = Path("config.yaml")
 else:
-    config_path = Path(f"inputs/ML/{run_name}/config.yaml") #TODO - might restructure wrapper to remove this now mb outputs are separated (and for NN)
+    config_path = Path(f"inputs/ML/{run_name}/config.yaml") #TODO - might restructure wrapper to remove this now model_building outputs are separated (and for NN)
 
 # Read config file
 with open(config_path, "r") as f:
@@ -96,8 +89,8 @@ basic_training = config['model_building']['basic_training'] # Whether to run bas
 n_models_to_tune = config['model_building']['n_models_to_tune'] # How many model types to take to the hyperparamter tuning stage
 host = config['general']['host'] # Host for tracking server
 port = config['general']['port'] # Port for local tracking server
-model_choice = config['model_building']['specify_model']['model_type'] # Model type if not basic training # TODO update with best once determined
-fs_choice = config['model_building']['specify_model']['fs'] #Feature selector if not basic training # TODO update with best once determined
+model_choice = config['model_building']['specify_model']['model_type'] # Model type if not basic training
+fs_choice = config['model_building']['specify_model']['fs'] #Feature selector if not basic training
 max_evals = config['model_building']['max_evals'] # How many evaluations to do in hyperopt tuning
 track_final = config['model_building']['track_final'] # Whether to copy the model_output to the designated folder for easier browsing
 meta_cols = config["general"]["training_meta_cols"]
@@ -134,7 +127,7 @@ else:
     hyperopt_name = f"{rn1}_hyperopt_{rn2}_{rn3}"
 
 ### READ IN DATA #######################################################################################################
-# Set pandas to display all columns and longer rows # IMPROVE remove in final version
+# Set pandas to display all columns and longer rows
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 180)
 
@@ -171,9 +164,10 @@ y_test = pd.read_csv(y_path, index_col=0).squeeze()  # Convert to 1D array
 print(f"Training samples: {len(X_train)} | Test samples: {len(X_test)}")
 print(f"Feature dimensions: {X_train.shape[1]} | Classes: {y_train.nunique()}\n")
 
-# TODO: Note that some isaric columns were selected that might be innaccurate (eg day 1 x ray infiltrates as analogous to Bilateral CXR changes
+# TODO: Note that some isaric columns were selected that might be inaccurate (eg day 1 x ray infiltrates as analogous to Bilateral CXR changes
 #  in Surrey data. It would be worth experimenting with dropping some of these here to see if the model improves (although if not feature-selected
-#  then it most likely has very minimal impact. Do here to avoid regenerating data, although technically it could affect imputation/scaling/maybe FS.
+#  then it most likely has very minimal impact. Do here to avoid regenerating data, although technically it could affect imputation/scaling/maybe FS
+#  so should be tested there too.
 
 ### PCA ON ORIGINAL DATA ###############################################################################################
 # Full dataset
@@ -191,8 +185,8 @@ variances = X_train.var(axis=0)
 threshold = float(var_threshold) # Effectively zero but avoids floating-point issues
 
 ### VARIANCE INFLATION FACTOR ANALYSIS #################################################################################
-# Note: currently nothing further is done with these results. The values are very high and across the entire dataset which is a problem for linear regression models: could be bypassed by omitting linear regression models (logistic regression)
-#   WARNING for final results switch off logistic regression
+# WARNING: currently nothing further is done with these results. The values are very high and across the entire dataset which is a problem for linear regression models: could be bypassed by omitting linear regression models (logistic regression)
+
 # Make dataframe for results
 vif_data = pd.DataFrame()
 vif_data["feature"] = X_train.columns
@@ -251,7 +245,7 @@ feature_selectors_all = {
             'min_features_to_select': 50,
         }
     },
-    # RFECV with Random Forest #TODO untested - takes very long so either run on HPC or with more time
+    # RFECV with Random Forest
     'RFECV_RF': {
         'class': RFECV,
         'base_params': {
@@ -262,7 +256,7 @@ feature_selectors_all = {
             'min_features_to_select': 50,
         }
     },
-    # RFECV with XGBoost #TODO untested - takes very long so either run on HPC or with more time
+    # RFECV with XGBoost
     'RFECV_XGB': {
         'class': RFECV,
         'base_params': {
@@ -329,7 +323,7 @@ feature_selectors_all = {
             'tol': 0.01,
         }
     },
-    # Sequential Feature Selection with XGBoost #TODO untested - takes very long so either run on HPC or with more time
+    # Sequential Feature Selection with XGBoost
     'SFS_XGB': {
         'class': SequentialFeatureSelector,
         'base_params': {
@@ -339,7 +333,7 @@ feature_selectors_all = {
             'tol': 0.01,
         }
     },
-    # No feature selection #TODO untested
+    # No feature selection
     'NONE': {
         'class': None,
         'base_params': {}
@@ -429,7 +423,7 @@ if basic_training:
     model_flags = [Logistic_regression, SVM, Random_forest, AdaBoost, Gradient_boosting, XGBoost, KNN]
     n_models_safe = min(sum(model_flags), n_models_to_tune)
     # Extract best model and feature selection from top_model_scores
-    for i in range(0, n_models_safe): # todo think this errors if more than the number of models - should pick the minimum of those values
+    for i in range(0, n_models_safe):
         model = scores.iloc[i, 0]
         fs = scores.iloc[i, 1]
         best_models_fs[model] = fs
@@ -538,12 +532,6 @@ def objective(params):
         # Log trial hyperparameters
         mlflow.log_params({**params, "type": classifier_type, **{"fs_" + k: v for k, v in fs_params.items()}})
 
-        # Incorporate feature selection into the pipeline
-        pipe = Pipeline([ #todo was this meant to be deleted? immediately reassigned below
-            ('int_to_float', IntToFloatTransformer()),
-            ('feature_selector', selector if feature_selection else 'passthrough'), # If FS is turned off, use passthrough instead of selector
-            ('classifier', clf)
-        ])
         # Incorporate required preprocessing/FS steps and the model
         pipe = Pipeline([
             ('preprocessor', Pipeline([
@@ -566,7 +554,7 @@ def objective(params):
     # Because fmin() tries to minimize the objective, this function must return the negative accuracy.
     return {'loss': -roc_score_mean, 'status': STATUS_OK}
 
-### DEFINE SEARCH SPACES PER FEATURE SELECTOR ########################################################################## # TODO - go over documentation and check which options to include for each parameter, and decide whether to go in base params or the search space - AI-gened for now
+### DEFINE SEARCH SPACES PER FEATURE SELECTOR ##########################################################################
 selector_param_spaces = { # Note: for new data, values may need to be tweaked as in feature selection parameter tuning, some fits can fail and crash the script
     'SFM_RF': {
         'threshold': hp.choice('sfm_rf_threshold', [None, 'median', 'mean', 1e-6, 1e-5, 1e-4])
@@ -657,7 +645,7 @@ if type_translation['rf'] in best_models_fs:
         'max_features': hp.choice('rf_max_features', ['sqrt', 'log2', 0.8]),
         'class_weight': hp.choice('rf_class_weight', [None, 'balanced']),
         'random_state': 42,
-        'fs_params': selector_param_spaces[best_models_fs[type_translation['rf']]] # The FS shorthand name, e.g. SFM_RF # WARNING - reviewing code and not sure if only rf models are having fs_params tuned explored? why do the search spaces not ahve this
+        'fs_params': selector_param_spaces[best_models_fs[type_translation['rf']]] # The FS shorthand name, e.g. SFM_RF
     })
 
 # Logistic regression
@@ -1002,16 +990,8 @@ with mlflow.start_run(run_name=run_name) as run:
     meta_col_names = X_test.columns[0:meta_cols].tolist()
     if meta_cols != 0:
         meta_cols = remaining_meta(meta_col_names, X_test[selected_features], sample_inves_7=None, graphs_dir=graphs_dir) # Calculate meta columns remaining in order to group features
-    try: #todo putting this in a try clause for testing temporarily - this erorred in HPC but might have been fixed in an earlier run
-        plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, output_data_dir, best_params,
+    plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, output_data_dir, best_params,
                             X_test, y_test, meta_cols)
-    except:
-        print("********************WARNING********************")
-        print("********************WARNING********************")
-        print("********************WARNING********************")
-        print("********************WARNING********************")
-        print("plot feature importance failed. diagnose the issue.") # todo delete after testing
-
 
     # Plot calibration curve
     plot_calibration_curve(y_proba, y_test, type_translation[classifier_type], graphs_dir)
@@ -1040,16 +1020,15 @@ with mlflow.start_run(run_name=run_name) as run:
     if enable_tracking:
         mlflow.log_artifacts(graphs_dir, artifact_path="graphs")
         mlflow.log_artifacts(output_data_dir, artifact_path="tables")
-    #todo also log metric test accuracy, f1, anything else I generate
 
     ### SAVE DATA FOR ADDITIONAL GRAPHS ################################################################################
-    y_pred_df = pd.DataFrame(y_pred, index=y_test.index) #todo check index is correct
+    y_pred_df = pd.DataFrame(y_pred, index=y_test.index) # TODO check index is correct
     y_proba_df = pd.DataFrame(y_proba, index=y_test.index)
     y_results = pd.concat([y_pred_df, y_proba_df], axis=0)
     y_results.to_csv(f"{output_data_dir}/y_results.csv")
 
 ### STORE RESULTS IN NEW FOLDER ########################################################################################
-# todo: if running as a standalone script (not in wrapper) then it will copy whatever old files + NN files too. Ideally only select current run files + ML
+# TODO: if running as a standalone script (not in wrapper) then it will copy whatever old files + NN files too. Ideally only select current run files + ML
 # Move and rename runs to a new directory for easier examination - results are copied from the MLflow tracking folder
 # (which is also available in the server) but renamed here for easier access based on the suffix defined in the config
 # file.
@@ -1117,14 +1096,9 @@ print(store_final_id)
 # Close all figures
 plt.close('all')
 
-# WARNING: If getting the 'too many 500 error responses' warning due to deleting files, run 'kill $(lsof -t -i tcp:8080)' in the terminal
-
-# Example output:
-# Test accuracy with best model (rf): 0.6000
-# Test F1 score with best model (rf): 0.6957
+# WARNING: If getting the 'too many 500 error responses' warning due to deleting files, run 'kill $(lsof -t -i tcp:8080)' in the terminal (or whichever port)
 
 
 # IMPROVE: Early stopping isn't implemented at all because it would work for some and not others so is more complicated to implement - but could add.
 #  Could also do an ensemble model approach for the final training, and stacking/voting
-
-# IMPROVE once final model is obtained, I'll likely want to plot more model-specific graphs
+# IMPROVE more model-specific graphs

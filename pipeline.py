@@ -163,4 +163,4 @@ if build_NN:
 print("Deleting:", model_storage_prelim)
 shutil.rmtree(model_storage_prelim)
 
-# TODO not sure if a HPC thing but the key metrics files seem broken. Per model it only saves the NN stats (overwrites TML?). Think it does work for all_metrics though (or possibly this is now outdated)
+# TODO not sure if a HPC thing but the key metrics files seem broken. Per model it only saves the NN stats (overwrites TML?). Think it does work for all_metrics though (or possibly this note is now outdated)

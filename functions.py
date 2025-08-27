@@ -66,8 +66,6 @@ def get_palette(palette): #WARNING - check that no
     }
     return palette_dict[palette]
 
-
-
 def set_graph_style():
     # Custom font
     font_path = "Merriweather_24pt-Medium.ttf"
@@ -184,7 +182,7 @@ def check_abnormal_SIDs(quant_samples, before_samples, samples, expected_length)
 
 # Calculate unique samples IDs and detect overlaps between the SIDs
 def calculate_overlaps(quant_samples, sample_index, sample_inves_3):
-    quant_samples_set = set(quant_samples) # WARNING: Removed the .index - check this still works
+    quant_samples_set = set(quant_samples)
     meta_samples_modified = set(sample_index)
     sample_overlap_quant = quant_samples_set & meta_samples_modified
     quant_unique = quant_samples_set - meta_samples_modified
@@ -490,12 +488,7 @@ def normalise_MS(dataset, meta_cols):
     # Separate out MS data
     dataset_quant = dataset.iloc[:, meta_cols:]
     # Get sample medians per row
-    try:
-        medians = dataset_quant.median(axis=1)
-    except:
-        print("WARNING: Could not determine medians. Saving quant dataset to quant.csv in cwd.") #todo testing only
-        print("Columns in 'quant' are:", dataset_quant.columns)
-        exit(1)
+    medians = dataset_quant.median(axis=1)
     # Subtract the median (due to being log2-transformed)
     dataset_quant = dataset_quant.sub(medians, axis=0)
     return dataset_quant
@@ -530,7 +523,7 @@ def impute_MICE(dataset, filename, datastring, num_datasets, iterations, graphs_
     dataset_missing = dataset_missing.replace([np.inf, -np.inf], np.nan)
 
     ### MAR Imputation for complete dataset with MICE
-    print(f"Starting MICE imputation with {num_datasets} datasets and {iterations} iterations") # WARNING - hoping to increase these after imputation. mean match, iterations, num_datasets, and n_jobs. also graphs are commented.
+    print(f"Starting MICE imputation with {num_datasets} datasets and {iterations} iterations") # WARNING - ideally would increase mean match, iterations, num_datasets, and n_jobs, but had issues with computational power. graphs are commented for the same reason.
     try:
         # Initialize kernel (handles categoricals natively)
         kernel = mf.ImputationKernel(
@@ -596,7 +589,7 @@ def encode_categorical(dataset, ordinal_cats):
             # Extract codes from the category dtype
             dataset[cat] = dataset[cat].cat.codes
 
-            # Verify no missing values remain #todo might tweak this, haven't tested because of imputation memory issues
+            # Verify no missing values remain # TODO might tweak this, haven't tested because of imputation memory issues
             assert dataset[cat].isna().sum() == 0
 
 # Encode y data
@@ -609,29 +602,6 @@ def encode_y(y):
     return y
 
 ### MODEL_BUILDING.PY FUNCTIONS ########################################################################################
-# # Detect metadata columns in the dataset - No longer in use # TODO remove at end if remains unused
-# def count_meta(dataset, name, metadata_features, drop, show_detail):
-#     matched = False # Initialise
-#     existing_columns = dataset.columns.tolist()
-#     col_number = 0 # Initialise
-#     for col in reversed(metadata_features):
-#         if col in existing_columns:
-#             matched = True
-#             if show_detail:
-#                 print(f"\nMetadata columns in {name}:")
-#                 print(dataset.columns.get_loc(col) + 1) # +1 for 1-based indexing conversion / allows for splicing where the first number is inclusive and the second exclusive
-#             col_number = dataset.columns.get_loc(col) + 1
-#             print(col_number)
-#             break
-#     if not matched:
-#         if show_detail:
-#             print("No metadata columns found.")
-#     if drop: # Drop the metadata if bool is true
-#         dataset = dataset.iloc[:, col_number:]
-#         col_number = 0 # Now removed all metadata so count is 0
-#         print(f"Metadata was dropped from {name}; if unintended, disable drop_metadata in the script.")
-#     return col_number,dataset
-
 # Basic model training function to get some initial scores and decide which model to proceed with
 def basic_train(model, X_train, y_train, identifier, scores_dict, feature_selectors, feature_selection, threshold):
     # Iterate over feature selectors
@@ -675,7 +645,7 @@ def basic_train(model, X_train, y_train, identifier, scores_dict, feature_select
             print(f"Error training {identifier} with {fs_name}: {str(e)}")
             model_results[identifier] = [identifier, None, None, None, None, None]
 
-    print(f"*** Finished tuning {model}. Current date/time is {datetime.now().strftime('%m-%d %H:%M')} ***")  # TODO testing
+    print(f"*** Finished tuning {model}. Current date/time is {datetime.now().strftime('%m-%d %H:%M')} ***")  # Note: used for testing but useful to know.
     # Print results from best feature selection methods
     model_results_df = pd.DataFrame.from_dict(model_results,
                            orient='index',
@@ -719,7 +689,7 @@ def plot_fs_performance(all_results_sorted, graphs_dir):
     plt.xlabel('Model')
     plt.ylabel('CV AUROC Score')
     plt.xticks(rotation=15)
-    plt.legend(title='Feature Selectors', title_fontsize=10, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)  # TODO test
+    plt.legend(title='Feature Selectors', title_fontsize=10, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
     plt.tight_layout(rect=[0, 0, 0.85, 1])
     plt.savefig(f"{graphs_dir}/selector_performance.png")
 
@@ -744,7 +714,7 @@ def port_in_use(host: str, port: int) -> bool:
 # Plot confusion matrix
 def plot_confusion_matrix(cm, graphs_dir):
     fig, ax = plt.subplots()
-    ax.imshow(cm, interpolation="nearest", cmap=get_palette("cmap_rwb")) # IMPROVE: don't love this colour mapping
+    ax.imshow(cm, interpolation="nearest", cmap=get_palette("cmap_rwb")) # IMPROVE: nicer colour mapping
 
     # Label axes
     classes = ["O2 not required", "O2 required"]
@@ -809,7 +779,7 @@ def plot_pca_original(X_train, X_test, y_train, y_test, graphs_dir):
         print(f"Error creating PCA biplot on full dataset: {str(e)}")
 
 # IMPROVE: PCA functions could be consolidated (especially if combining for plot_pca_original etc outside of the function)
-#  Note: this is named to plot pre and post FS, but currently just does it post ('after')
+#  Note: this is named to plot pre and post FS, but currently just does it post FS ('after')
 # Plot PCA on the combined dataset - i.e. original data after feature selection
 def pca_pre_post_fs(X_full, selected_features, y_full, graphs_dir, fs_state):
     # Select chosen features only
@@ -850,7 +820,7 @@ def pca_pre_post_fs(X_full, selected_features, y_full, graphs_dir, fs_state):
     plt.savefig(f"{graphs_dir}/pca_full_dataset_{fs_state}_FS.png")
     plt.close()
 
-# Plot learning curve # TODO learning curve, precision recall etc have a legend and title with AP labelled - remove titles before final report
+# Plot learning curve
 def plot_learning_curve(final_pipeline, X_train, y_train, graphs_dir):
     # Compute scores at varying training sizes
     train_sizes, train_scores, val_scores = learning_curve(
@@ -895,7 +865,7 @@ def plot_roc_auc(y_proba, y_test, graphs_dir):
 
 # Plot feature importance (or permutation)
 def plot_feature_importance(classifier_type, final_pipeline, selected_features, graphs_dir, data_dir, best_params,
-                            X_test, y_test, meta_cols=None): # todo take out x test and y test from function calls - not used
+                            X_test, y_test, meta_cols=None): # TODO take out x test and y test from function calls - not used
     set_graph_style()
     ### Extract feature importances based on the classifier type
     if classifier_type in ['rf', 'xgb', 'gb']:
@@ -1033,7 +1003,7 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
         ax4.tick_params(axis='x', labelsize=10)
         ax4.tick_params(axis='y', labelsize=10)
 
-        # Custom font (for some reason default styles aren't applied) #IMPROVE
+        # Custom font (for some reason default styles aren't applied) # TODO - will work locally but not for other users without the file. Should add a failsafe
         font_path = "Merriweather_24pt-Medium.ttf"
         fm.fontManager.addfont(font_path)
         custom_font = fm.FontProperties(fname=font_path).get_name()
@@ -1088,7 +1058,7 @@ def plot_feature_importance(classifier_type, final_pipeline, selected_features, 
         csv_filename = f"{data_dir}/feature_coefficients.csv"
     importance_df.to_csv(csv_filename, index=False)
 
-    print(f"\nTop 10 most important features overall:") #TODO think metadata colum is including extra features, but might be a data misconfiguration issue
+    print(f"\nTop 10 most important features overall:")
     if meta_cols is not None:
         print(importance_df.head(10)[['Feature', importance_column, 'Category']].to_string(index=False))
     else:
@@ -1118,7 +1088,7 @@ def plot_calibration_curve(y_proba, y_test, classifier_type, graphs_dir):
         ax.set_xlabel("Mean predicted probability")
         ax.set_ylabel("Fraction of positives")
         ax.legend(loc='upper left')
-        plt.savefig(f"{graphs_dir}/calibration_curve.png") # WARNING this overwrites TML when running NN! save to unique folders/names
+        plt.savefig(f"{graphs_dir}/calibration_curve.png") # WARNING this overwrites TML when running NN! save to NN or ML folders - check other outputs (e.g. confusion matrix, etc) which have the same issue
         plt.close(fig)
 
         # Log Brier score
@@ -1153,7 +1123,7 @@ def plot_decision_distribution(y_proba, y_test, graphs_dir):
     plt.savefig(f'{graphs_dir}/prediction_distribution.png')
 
 # Plot decision tree for tree-based models
-def plot_decision_tree(classifier_type, final_pipeline, retained_features, class_names, data_dir, graphs_dir): # IMPROVE - use better styling (my set_styles doesn't seem to apply either). Will tweak if publishing the trees
+def plot_decision_tree(classifier_type, final_pipeline, retained_features, class_names, data_dir, graphs_dir): # IMPROVE - use better styling. Will tweak if publishing the trees
     ### Plot decision tree for tree-based models #TODO: Basic version - when a final best model is obtained this graph can be fine tuned if useful for the final report
     if classifier_type in ['rf', 'gb', 'xgb']: #TODO untested for gb - and could use refinement of outputs
         try:
@@ -1397,7 +1367,7 @@ def grouped_shap(shap_vals, features, groups):
 
 ### OTHER ##############################################################################################################
 def plot_metrics_heatmap(metrics, output_dir, string, conf_int):
-    plt.figure(figsize=(9, (6/7)*len(metrics))) #IMPROVE size calc doesn't work for val and had to be manually changed
+    plt.figure(figsize=(9, (6/7)*len(metrics))) #IMPROVE size calc doesn't work for val and numbers have to be manually changed to not create a squashed graph
     ax = sns.heatmap(
         metrics,
         annot=True,

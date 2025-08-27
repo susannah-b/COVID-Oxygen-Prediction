@@ -3,16 +3,17 @@
 # incorporated into the original model code (such as bootstrapped AUROC), however to save time in running the scripts
 # again they are instead calculated here.
 
-import subprocess
-from pathlib import Path
+# WARNING: File paths have been removed for publication, and certain inputs were made manually outside of the scripts
+#  and the script will therefore unable to run
+
+########################################################################################################################
 import os
 import joblib
 import pandas as pd
 import torch
-import numpy as np
 from matplotlib import pyplot as plt
 from MLstatkit.stats import Delong_test
-from functions import plot_roc_auc, set_graph_style, plot_metrics_heatmap, get_palette
+from functions import set_graph_style, plot_metrics_heatmap, get_palette
 import seaborn as sns
 
 ### SET RANDOM SEEDS ###################################################################################################
@@ -36,15 +37,11 @@ os.makedirs(output_data_dir, exist_ok=True)
 
 # Set ROC paths and names
 file_paths = [
-    "/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/extra_outputs/1_0803-180856_V+D-T2B[M-P-C-R-]M+Mo[All]FS[All-2]NFS[NONE]E+_V-_best_config/roc_data_TML.pkl",
-    "/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/extra_outputs/2_0806-180711_V+D-T2B[M-P-C-R-]M-Mo[All]FS[All-2]NFS[NONE]E+_V+_but_no_meta_MINIMAL_MFS/roc_data_TML.pkl",
-    "/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/extra_outputs/3_0806-220720_V+D+T2B[M-P-C-R-]M-Mo[All]FS[Some]NFS[NONE]E+_V+_no_meta_D+_REDO_GB_SVM_partial_FS/roc_data_TML.pkl",
-    "/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/extra_outputs/4_0803-181043_V-D-T2B[M+P+C+R+]M+Mo[All]FS[All-2]NFS[NONE]E+_V+_best_T2B+/roc_data_TML.pkl",
-    "/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/extra_outputs/5_0803-181140_V-D-T2B[M-P-C-R-]M+Mo[All]FS[All-2]NFS[NONE]E+_V+_best_T2B-/roc_data_TML.pkl",
-    "/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/extra_outputs/6_0806-181110_V-D-T2B[M-P-C-R-]M-Mo[All]FS[All-2]NFS[NONE]E+_V-_no_meta_D0_MINIMAL_MFS/roc_data_TML.pkl",
-    "/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/extra_outputs/7_0803-181957_V-D+T2B[M-P-C-R-]M-Mo[All]FS[All-2]NFS[NONE]E+_V-_no_meta_D+/roc_data_TML.pkl",
+    "Example.pkl",
+    "Example_2.pkl",
+    "Example_3.pkl"
 ]
-model_ids = ["Run 1", "Run 2", "Run 3", "Run 4", "Run 5", "Run 6", "Run 7"]  # TODO Update with curve names/run ids
+model_ids = ["Run 1", "Run 2", "Run 3"]
 
 # Set up plot
 sns.set_palette(get_palette(str(len(model_ids))), desat=1)
@@ -82,21 +79,37 @@ plt.tight_layout()
 plt.savefig(os.path.join(output_data_dir, 'combined_roc_curves.png'))
 
 # ### PLOT HEATMAP OF METRICS ############################################################################################
-metrics_path = "/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/extra_outputs/all_results_metrics.csv"
+metrics_path = "[file_path/all_results_metrics.csv]" # WARNING: Example file only, will not run
+# TODO: all_results_metrics is currently made manually, although should be the all_key_metrics.csv file just with the
+#  addition of a 'Summary' column inserted to manaully label (could be automated here instead) (plus 'Best Test AUROC'
+#  but this wasn't used in the scripts at all). Used a manual version as I had some issues with generating the all_key_metrics
+#  file in the HPC - investigate this.
 metrics = pd.read_csv(metrics_path)
 test_metrics = metrics.iloc[:, [1] + list(range(3, 9))].set_index('Summary')
 validation_metrics = metrics.iloc[0:3, [1] + list(range(-6, 0))].set_index('Summary')
-conf_int_test = pd.read_csv("/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/extra_outputs/confidence_intervals_test.csv").set_index('Summary')
-conf_int_val = pd.read_csv("/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/extra_outputs/confidence_intervals_val.csv").set_index('Summary')
+conf_int_test = pd.read_csv("extra_outputs/confidence_intervals_test.csv").set_index('Summary')
+conf_int_val = pd.read_csv("extra_outputs/confidence_intervals_val.csv").set_index('Summary')
+# TODO: confidence_intervals files were also generated manually in the below format, from the CIs files generated in
+#  extra_outputs.py. This should also be automated instead
+#  Example:
+# Summary	ML Test Accuracy	ML Test F1	ML Test AUROC	NN Test Accuracy	NN Test F1	NN Test AUROC
+# 1. V+ M+ D0	(0.53-0.83)	(0.43-0.86)	(0.51-0.95)	(0.50-0.83)	(0.43-0.86)	(0.50-0.93)
+# 2. V+ M- D0	(0.40-0.73)	(0.31-0.76)	(0.49-0.88)	(0.57-0.87)	(0.45-0.89)	(0.50-0.91)
+# 3. V+ M- D+	(0.40-0.70)	(0.38-0.74)	(0.44-0.80)	(0.48-0.78)	(0.36-0.76)	(0.43-0.83)
+# 4. V- M+  B+ D0	(0.63-0.93)	(0.48-0.92)	(0.63-0.97)	(0.40-0.77)	(0.36-0.80)	(0.58-0.96)
+# 5. V- M+ B- D0	(0.57-0.87)	(0.45-0.88)	(0.66-0.97)	(0.57-0.87)	(0.45-0.88)	(0.48-0.93)
+# 6. V- M- B- D0	(0.50-0.83)	(0.38-0.83)	(0.59-0.94)	(0.50-0.83)	(0.43-0.86)	(0.52-0.92)
+# 7. V- M- B- D+	(0.48-0.78)	(0.41-0.79)	(0.53-0.86)	(0.53-0.80)	(0.42-0.81)	(0.45-0.85)
+
 plot_metrics_heatmap(test_metrics, output_data_dir, "Test", conf_int_test)
 plot_metrics_heatmap(validation_metrics, output_data_dir, "Validation", conf_int_val)
 
 ### DELONG'S TEST ######################################################################################################
-# Load in data for ROC
-y_proba_model1 = pd.read_csv("/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/extra_outputs/1_0803-180856_V+D-T2B[M-P-C-R-]M+Mo[All]FS[All-2]NFS[NONE]E+_V-_best_config/y_proba_TML.csv", header=0).squeeze().to_numpy()
-y_proba_model2 = pd.read_csv("/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/extra_outputs/2_0806-180711_V+D-T2B[M-P-C-R-]M-Mo[All]FS[All-2]NFS[NONE]E+_V+_but_no_meta_MINIMAL_MFS/y_proba_TML.csv", header=0).squeeze().to_numpy()
-y_true = pd.read_csv("/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/model_output/1_0803-180856_V+D-T2B[M-P-C-R-]M+Mo[All]FS[All-2]NFS[NONE]E+_V-_best_config/training_data/Surrey_y_test.csv", header=0) #D0
-# y_true = pd.read_csv("/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/RESULTS/7_0803-181957_V-D+T2B[M-P-C-R-]M-Mo[All]FS[All-2]NFS[NONE]E+_V-_no_meta_D+/training_data/Surrey_y_test.csv", header=0)  #D+
+# Load in data for ROC # WARNING: Example file paths where [] are used. Change model name, and for delong's can change which y_proba files are used
+y_proba_model1 = pd.read_csv("extra_outputs/[Example_model_name]/y_proba_TML.csv", header=0).squeeze().to_numpy()
+y_proba_model2 = pd.read_csv("extra_outputs/[Example_model_name_2]/y_proba_TML.csv", header=0).squeeze().to_numpy()
+y_true = pd.read_csv("[file_path]/Surrey_y_test.csv", header=0) # WARNING y_true for D0 - comment if using D+ data
+# y_true = pd.read_csv("/Users/s.blundell/LIFE703-Project/COVID_Oxygen_Prediction/RESULTS/7_0803-181957_V-D+T2B[M-P-C-R-]M-Mo[All]FS[All-2]NFS[NONE]E+_V-_no_meta_D+/training_data/Surrey_y_test.csv", header=0) # WARNING y_true for D+ - comment if using D0 data only
 y_true = y_true.iloc[:, 1].squeeze().to_numpy()
 # Perform test
 z_score, p_value = Delong_test(y_true, y_proba_model1, y_proba_model2)

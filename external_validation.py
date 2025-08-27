@@ -16,12 +16,9 @@ import argparse
 import yaml
 import os
 from mlflow.tracking import MlflowClient
-
 from functions import port_in_use, pca_pre_post_fs, plot_roc_auc, plot_feature_importance, plot_calibration_curve, \
-    plot_decision_tree, plot_precision_recall, plot_pca_predicted, plot_confusion_matrix, plot_pca_original, \
-    plot_pca_test_unprocessed, remaining_meta, set_graph_style
-
-
+    plot_decision_tree, plot_precision_recall, plot_pca_predicted, plot_confusion_matrix, plot_pca_test_unprocessed, \
+    remaining_meta, set_graph_style
 
 # Apply graph styles
 set_graph_style()
@@ -113,7 +110,9 @@ if enable_tracking:
 ### LOAD MODEL #########################################################################################################
 if not args.from_pipeline:
     # Set run info to take model from manually
-    model_name = "2_0806-180711_V+D-T2B[M-P-C-R-]M-Mo[All]FS[All-2]NFS[NONE]E+_V+_but_no_meta_MINIMAL_MFS" # Name of the experiment (can be found in model_output and is printed at the end of the run) - Change as needed
+    model_name = "Example_run_name"
+    # model_name is the name of the experiment (can be found in model_output and is printed at the end of the run) - Edit
+    # as needed. Will be in the form [Number]_[Date]_[Time}_[suffix]. If run with pipeline.py, this can be skipped.
 else:
     model_name = run_name
 
@@ -227,7 +226,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
     model_results.to_csv(f"{output_data_dir}/Prediction_results_validation_data.csv")
 
     ### GRAPHS #############################################################################################################
-    # Plot PCA on the combined dataset - i.e. all data after feature selection #todo for all pcas, check a few samples to confirm they're correct (label on graph)
+    # Plot PCA on the combined dataset - i.e. all data after feature selection
     with mlflow.start_run(nested=True): # Start another run to avoid auologging conflicts
         mlflow.sklearn.autolog(disable=True)  # Disables autolog inside this run
         # Call function to plot PCA on the dataset post feature selection
@@ -237,7 +236,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
     plot_roc_auc(y_proba, y_data, graphs_dir)
 
     # Plot feature importance # IMPROVE - don't technically need this for exval as it should be the same
-    meta_col_names = X_data.columns[0:meta_cols].tolist() # todo check this sections calculation is accurate
+    meta_col_names = X_data.columns[0:meta_cols].tolist()
     if meta_cols != 0:
         meta_cols = remaining_meta(meta_col_names, X_data[selected_features], sample_inves_7=None, graphs_dir=graphs_dir)  # Calculate meta columns remaining in order to group features # Note: untested that read in values are correct
     try:
@@ -276,7 +275,7 @@ with mlflow.start_run(run_name=val_run_name) as run:
 # Move and rename runs to a new directory for easier examination - results are copied from the MLflow tracking folder
 # (which is also available in the server) but renamed here for easier access based on the original model name.
 # Bool to set whether to copy the runs to the final output subdirectory - for testing only this can be disabled
-if track_final: #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful
+if track_final: #IMPROVE: take out useful individual subfolders vs whole folder contents - need to determine which bits are useful and only copy those
     print(f"\'track_final\' has been enabled, so the model information will be copied to ./model_output/ML under the original experiment {model_name} for easier viewing.")
 
     # Determine file locations

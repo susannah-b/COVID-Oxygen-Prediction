@@ -18,14 +18,16 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC, LinearSVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.base import clone
 from xgboost import XGBClassifier
 from hyperopt import fmin, tpe, hp, STATUS_OK, STATUS_FAIL, Trials, space_eval
 import mlflow
 import yaml
 import mlflow.sklearn
+from mlflow.tracking import MlflowClient
 import matplotlib.pyplot as plt
-from functions import port_in_use, pca_pre_post_fs, plot_learning_curve, \
-    plot_roc_auc, plot_calibration_curve, plot_precision_recall, \
+from functions import port_in_use, pca_pre_post_fs, plot_roc_auc, plot_calibration_curve, plot_precision_recall, \
     plot_pca_predicted, plot_confusion_matrix, plot_decision_distribution, remaining_meta, grouped_shap, \
     plot_pca_original, plot_pca_test_unprocessed, set_graph_style
 import os
@@ -36,12 +38,7 @@ import shutil
 import json
 import joblib
 import argparse
-from sklearn.metrics import confusion_matrix, classification_report
-from sklearn.base import clone
 import shap
-from mlflow.tracking import MlflowClient
-
-# todo clean up at end
 
 # Bool to show additional detail
 show_detail = False
@@ -51,7 +48,7 @@ set_graph_style()
 
 ### SET RANDOM SEEDS ###################################################################################################
 # Function to set random seeds - certain operations advance random state, and due to the small dataset I've found better results (on both test and exval) with certain seeds
-def reset_seeds(seed=44): #TODO can actually be hypertuned
+def reset_seeds(seed=44):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
@@ -86,7 +83,7 @@ else:
 with open(config_path, "r") as f:
     config = yaml.safe_load(f)
 
-# Set parameters for this file: #todo copied pasted from ML, check if used at end - some def need changing for NNs
+# Set parameters for this file:
 validate = config['general']['validate'] # Whether to make the Surrey dataset validation compatible
 var_threshold = config['model_building']['var_threshold'] # Threshold for variance filtering
 feature_selection = config['model_building']['feature_selection'] # Whether to do feature selection at all stages
@@ -126,7 +123,7 @@ else:
     hyperopt_name = f"{rn1}_hyperopt_{rn2}_{rn3}"
 
 ### READ IN DATA #######################################################################################################
-# Set pandas to display all columns and longer rows # IMPROVE remove in final version
+# Set pandas to display all columns and longer rows
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 180)
 
@@ -333,7 +330,7 @@ candidate_fs = ['RFECV_LR', 'RFECV_SVC', 'RFECV_RF', 'RFECV_XGB', 'SFM_LR', 'SFM
 
 ### ESTIMATE BEST NN MODEL WITH BASIC SETTINGS #########################################################################
 # IMPROVE: The 'basic_train' which evaluates a few different model versions as with the traditional ML model is not yet
-#  implemented. WOuld be interesting to automate layer/activation fucntion/etc experimentation.
+#  implemented. Would be interesting to automate layer/activation function/etc experimentation.
 
 ### DEFINE NEURAL NETWORK ##############################################################################################
 def create_model(params, input_dim):
@@ -405,7 +402,7 @@ class EarlyStopping:
 
 ### FUNCTION TO TRAIN FINAL MODEL ######################################################################################
 # Includes options for cross validation and early stopping
-# todo move this to functions & imprve structure, eg final train bool could also turn of ES etc, validation set should be set up better instead of requiring/returning none
+# TODO move this to functions & refine structure, eg final train bool could also turn of ES etc, validation set should be set up better instead of requiring/returning none
 # Function to train the model - applied to both cross validation and the final model with no validation/early stopping
 def train_model(model, train_loader, val_loader, es_handler, optimiser, verbose=1):
     all_probs = []
@@ -499,7 +496,7 @@ criterion = nn.BCEWithLogitsLoss()  # Binary Cross Entropy with built-in sigmoid
 ### OBJECTIVE FUNCTION FOR HYPEROPT PARAMETER TUNING ###################################################################
 
 # Define classifier type
-  # IMPROVE: This is used to be similar in structure to the traditional model; could be used after a similar basic_train
+  # IMPROVE: This is implemented to be similar in structure to the traditional model; could be used after a similar basic_train
   #  function is implemented. For now, just stores best result for the defined model
 classifier_type = 'neural_network'
 
@@ -575,7 +572,7 @@ def objective(params):
             )
 
             train_loader_hp = DataLoader(train_dataset_hp, batch_size=int(params['batch_size']), shuffle=True)
-            val_loader_hp = DataLoader(val_dataset_hp, batch_size=12, shuffle=False)  # todo batch size - will also error if it creates a size of 1 at any point
+            val_loader_hp = DataLoader(val_dataset_hp, batch_size=12, shuffle=False)  # TODO batch size - will also error if it creates a size of 1 at any point
 
             # Initialize fresh model and early stopping for this fold (note early stopping is only determined for the final model in the cross validation section and not stored for this iteration)
             input_dim_hp = X_train_hp_processed.shape[1]  # Get input dim from processed data
@@ -720,7 +717,7 @@ fixed_search_space = {
     'fs_params': selector_param_spaces[selector_type]
 }
 # Set search space to use - used to bypass hyperopt and test fixed parameters
-  # IMPROVE: This was implemented because the results from hyperopt weren't exceed my results with set parameters - ideally resolve this (e.g. changing input params, perhaps how hyperopt evaluates 'best' model, or editing/removing CV in hyperopt)
+  # IMPROVE: This was implemented because the results from hyperopt weren't exceed my results with set parameters (although possibly now corrected) - ideally resolve this (e.g. changing input params, perhaps how hyperopt evaluates 'best' model, or editing/removing CV in hyperopt)
 if use_set_search_space:
     search_space = fixed_search_space
     max_evals = 1
@@ -810,7 +807,6 @@ class O2Classifier(nn.Module):
 ### CREATE WRAPPER FOR MODEL ###########################################################################################
 # Due to the combined sklearn and pytorch elements of the pipeline (preprocessing and NN model), the model is required to
 #  be logged as pyfunc, not sklearn or pytorch. It therefore has no .predict attribute needed for SHAP KernelExplainer.
-#TODO - can i just use the model as wrapped by pyfunc? or does it need to be loaded in after being logged
 
 # Wrapper function to convert numpy input to pytorch tensors
 def model_predict(X):
@@ -825,16 +821,13 @@ def model_predict(X):
         return torch.sigmoid(logits).numpy()
 
 ### TRAIN FINAL MODEL IN MLFLOW ########################################################################################
-#todo many parts were deleted from TML framework, so copy in later
-# todo edit code comment blocks/move around
-
 # Create a new MLflow Experiment
 if enable_tracking: # Have to use a unique name or it creates issues with artifact tracking
     exp_name = "Oxygen Prediction Neural Network - Surrey"
 else:
     exp_name = "Oxygen Prediction Neural Network - Surrey - Offline"
 
-artifact_path = f"mlartifacts" #todo what happens with multiple runs
+artifact_path = f"mlartifacts" # TODO check what happens with multiple runs
 os.makedirs(artifact_path, exist_ok=True)
 client = MlflowClient()
 existing_experiment = client.get_experiment_by_name(exp_name)
@@ -959,7 +952,7 @@ with mlflow.start_run(run_name=run_name) as run:
         )
 
         train_loader_fold = DataLoader(train_dataset_fold, batch_size=batch_size, shuffle=True)
-        val_loader_fold = DataLoader(val_dataset_fold, batch_size=12, shuffle=False) # todo batch size - will also error if it creates a size of 1 at any point
+        val_loader_fold = DataLoader(val_dataset_fold, batch_size=12, shuffle=False) # TODO batch size - will also error if it creates a size of 1 at any point
 
         # Initialize fresh model and early stopping for this fold
         input_dim_fold = X_train_fold_processed.shape[1]  # Get input dim from processed data
@@ -999,7 +992,7 @@ with mlflow.start_run(run_name=run_name) as run:
 
     # Train final model for the average best epoch count (no early stopping needed)
     print(f"\nNow training final model with {avg_best_epoch} epochs.\n")
-    n_epochs = avg_best_epoch  # Set to average best epoch #Improve this feeds into train_model but should be fed into function, not set in script
+    n_epochs = avg_best_epoch  # Set to average best epoch #IMPROVE this feeds into train_model but should be fed into function, not set in script
     train_model(final_model, train_full_loader, None, es_handler=None, optimiser=optimiser, verbose=True)
 
     # Save input features for validation - JSON (human-readable) and joblib
@@ -1011,7 +1004,7 @@ with mlflow.start_run(run_name=run_name) as run:
     # Track retained features post-preprocessing
     var_thresh = preprocessor.named_steps['var_thresh']
     retained_mask = var_thresh.get_support()
-    retained_features = X_train_original.columns[retained_mask] #todo X_train_original instead of X train i think, as X_train was preprocessed and converted to numpy
+    retained_features = X_train_original.columns[retained_mask]
     print("Features after thresholding:", len(retained_features.tolist()))
     show_features = False  # Enable or disable as required
     if show_detail:
@@ -1046,7 +1039,7 @@ with mlflow.start_run(run_name=run_name) as run:
         json.dump(selected_features, f)
     joblib.dump(selected_features, f"{output_data_dir}/selected_features.joblib")
 
-    # # Reconstruct dataframe after preprocessing/dtype conversion #TODO not sure if this is needed or interferes - check. Doing it now because I understand the workflow, but can delete if not used
+    # # Reconstruct dataframe after preprocessing/dtype conversion #TODO not sure if this is needed or interferes - check.
     # X_train = X_train_original[selected_features]
 
     ### Log the final pipeline preprocessor and model
@@ -1104,7 +1097,7 @@ with mlflow.start_run(run_name=run_name) as run:
         y_pred = (y_proba > 0.5).astype(int)
 
     # Confusion matrix
-    cm = confusion_matrix(y_test, y_pred)  # todo check this is right!
+    cm = confusion_matrix(y_test, y_pred)
     print("Confusion Matrix:")
     print(cm)
 
@@ -1132,8 +1125,6 @@ with mlflow.start_run(run_name=run_name) as run:
     mlflow.log_metric("specificity-tnr", specificity)
     mlflow.log_metric("precision-ppv", precision)
     mlflow.log_metric("npv", npv)
-
-    # TODO AI GEN TEMP OUTPUTS - find and make my own (eg CM already has a function)
 
     # Classification report
     print("\nClassification Report:")
@@ -1165,7 +1156,6 @@ with mlflow.start_run(run_name=run_name) as run:
         results_combined.to_csv(ML_prediction_path)
         shutil.copy2(ML_prediction_path, NN_prediction_path)  # Copy back to NN results
 
-    # TODO check over model_building for TML to see if anything extra is missed from here - and vice versa
     ### GRAPHS #############################################################################################################
     # Plot PCA on the combined dataset - i.e. all data after feature selection
     with mlflow.start_run(nested=True):  # Start another run to avoid auologging conflicts
@@ -1244,13 +1234,13 @@ with mlflow.start_run(run_name=run_name) as run:
         mlflow.log_artifacts(output_data_dir, artifact_path="tables")
 
     ### SAVE DATA FOR ADDITIONAL GRAPHS ################################################################################
-    y_pred_df = pd.DataFrame(y_pred, index=y_test.index) #todo check index is correct
+    y_pred_df = pd.DataFrame(y_pred, index=y_test.index)
     y_proba_df = pd.DataFrame(y_proba, index=y_test.index)
     y_results = pd.concat([y_pred_df, y_proba_df], axis=0)
     y_results.to_csv(f"{output_data_dir}/y_results.csv")
 
 ### STORE RESULTS IN NEW FOLDER ########################################################################################
-# todo: if running as a standalone script (not in wrapper) then it will copy whatever old files + ML files too. Ideally only select current run files + NN
+# TODO: if running as a standalone script (not in wrapper) then it will copy whatever old files + ML files too. Ideally only select current run files + NN
 # Move and rename runs to a new directory for easier examination - results are copied from the MLflow tracking folder
 # (which is also available in the server) but renamed here for easier access based on the suffix defined in the config
 # file.
@@ -1326,41 +1316,3 @@ print(store_final_id)
 plt.close('all')
 
 # WARNING: If getting the 'too many 500 error responses' warning due to deleting files, run 'kill $(lsof -t -i tcp:8080)' in the terminal
-
-# TODO - is FS also applied within hyperopt in the TML? Runs with slow selectors take a long time which I don't remember from TML - but could be due to difference in selectors
-
-
-
-
-
-
-
-
-
-
-# TODO
-#  Needs to be updated for TML model framework; current version is a basic version to test concept - including validation file
-
-# Adjust hyperparams:
-    # learning rate (smaller = better but more computational)
-    # batch size (larger = smoother gradients more RAM, smaller = may generalise better)
-    # epochs (better learning but watch for overfitting (monitor validation performance))
-# Model architecture:
-    # More layers is more complex patterns but require more data and careful regularization
-    # Activation Functions: Experiment with ReLU, LeakyReLU, or GELU for better non-linearity and learning dynamics
-# Overfitting vs underfitting:
-    # If performs well on test but not train/val: Add dropout, use regularization (e.g., L2), or gather more data
-    # If failing to capture patterns in training: Add layers, increase training time, or adjust hyperparameters
-
-# Batch size and epoch number can be chosen by trial and error (or function?)
-
-# Needed for my NN:
-    # This data doesn't have headers, which idk if I can preserve or load later
-    # How many layers do I need? 'heuristics or copy others'
-    # In forward you can: skip connections, attention mechanisms, use conditionals, and do multiple inputs or outputs. Likely more.
-
-# Add regularization (dropout, weight decay)
-# Use learning rate schedulers
-# Cross-validation
-# Tune architecture and hyperparameters
-# Early stopping for overfitting
